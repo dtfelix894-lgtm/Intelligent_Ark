@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build
+.next/
+out/
+build/
+dist/
+tsconfig.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# 数据库（含用户哈希密码，禁止入库）
+*.db
+*.db-shm
+*.db-wal
+
+# 本地 TLS 证书 / 私钥
+frontend/certificates/
+
+# 项目交付物（PPT/PDF/DOCX 报告与生成脚本，按需手工归档）
+*.pptx
+*.pdf
+*.docx
+/build_v2.py
+/build_v3.py
+/build_restructured_ppt.py
+/update_cpolar.py
+/package.json
+/package-lock.json
+/重构ppt.md
+/docx_generation.md
+
+# 根目录素材（PPT 设计稿用，非运行时资产）
+/MP3/
+/images/
+
+# Claude Code 本地缓存
+.claude/
+memory/

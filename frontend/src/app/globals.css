@@ -1,0 +1,164 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 20 14.3% 4.1%;
+    --card: 0 0% 100%;
+    --card-foreground: 20 14.3% 4.1%;
+    --primary: 22 100% 64%;
+    --primary-foreground: 60 9.1% 97.8%;
+    --secondary: 24 9.8% 10%;
+    --secondary-foreground: 60 9.1% 97.8%;
+    --muted: 60 4.8% 95.9%;
+    --muted-foreground: 25 5.3% 44.7%;
+    --accent: 60 4.8% 95.9%;
+    --accent-foreground: 20 14.3% 4.1%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 60 9.1% 97.8%;
+    --border: 20 5.9% 90%;
+    --input: 20 5.9% 90%;
+    --ring: 22 100% 64%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 215 28% 17%;
+    --foreground: 60 9.1% 97.8%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+.theme-campus {
+  --panel-bg: rgba(15, 23, 42, 0.85);
+  --panel-border: rgba(6, 182, 212, 0.15);
+  --card-bg: rgba(30, 41, 59, 0.7);
+  --accent-cyan: #06b6d4;
+  --accent-purple: #a855f7;
+  --accent-emerald: #10b981;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  font-size: 14px;
+}
+
+.theme-campus body,
+.theme-campus {
+  background: linear-gradient(145deg, #0f172a 0%, #1e293b 50%, #0c4a6e 100%);
+  color: var(--text-primary);
+}
+
+.theme-community {
+  --panel-bg: #fffaf5;
+  --panel-border: rgba(249, 115, 22, 0.2);
+  --card-bg: #ffffff;
+  --accent-orange: #ea580c;
+  --text-primary: #292524;
+  --text-secondary: #57534e;
+  --text-muted: #a8a29e;
+  font-size: 18px;
+}
+
+.theme-community body,
+.theme-community {
+  background: #fff7ed;
+  color: var(--text-primary);
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+.skeleton-bar {
+  animation: skeleton-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes sos-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+  70% { box-shadow: 0 0 0 16px rgba(220, 38, 38, 0); }
+}
+
+.sos-pulse {
+  animation: sos-pulse 1.5s ease-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(0.85); }
+  50% { transform: scale(1.15); }
+}
+
+.breathe-animate {
+  animation: breathe 4s ease-in-out infinite;
+}
+
+@keyframes floatUp {
+  0%   { opacity: 1;   transform: translateY(0)    scale(1); }
+  20%  { opacity: 1;   transform: translateY(-10px) scale(1.1); }
+  100% { opacity: 0;   transform: translateY(-60px) scale(0.8); }
+}
+
+.animate-float-up {
+  animation: floatUp 0.6s ease-out forwards;
+}
+
+/* 均衡器动画 — 3 根音浪竖线 */
+@keyframes eq-bar-1 {
+  0%, 100% { transform: scaleY(0.4); }
+  50%       { transform: scaleY(1.0); }
+}
+@keyframes eq-bar-2 {
+  0%, 100% { transform: scaleY(0.9); }
+  50%       { transform: scaleY(0.3); }
+}
+@keyframes eq-bar-3 {
+  0%, 100% { transform: scaleY(0.6); }
+  50%       { transform: scaleY(1.2); }
+}
+.animate-eq-bar-1 { animation: eq-bar-1 0.45s ease-in-out infinite; }
+.animate-eq-bar-2 { animation: eq-bar-2 0.45s ease-in-out infinite 0.15s; }
+.animate-eq-bar-3 { animation: eq-bar-3 0.45s ease-in-out infinite 0.3s; }
+
+.theme-campus ::-webkit-scrollbar {
+  width: 4px;
+}
+.theme-campus ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.theme-campus ::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 4px;
+}
+.theme-campus ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
+.theme-community ::-webkit-scrollbar {
+  width: 6px;
+}
+.theme-community ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.theme-community ::-webkit-scrollbar-thumb {
+  background: rgba(249, 115, 22, 0.3);
+  border-radius: 4px;
+}
+.theme-community ::-webkit-scrollbar-thumb:hover {
+  background: rgba(249, 115, 22, 0.5);
+}
+
+.phone-chat ::-webkit-scrollbar {
+  width: 4px;
+}
+.phone-chat ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.phone-chat ::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+}
