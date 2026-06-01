@@ -810,7 +810,7 @@ export default function ChatPage() {
           (currentUser as SocialUser).phone ||
           String(Date.now());
 
-        const endpoint = scenario === "community" ? "/api/chat/stream-sse" : "/api/chat/stream";
+        const endpoint = "/api/chat/stream-sse";
 
         const res = await apiFetch(endpoint, {
           method: "POST",
@@ -836,7 +836,11 @@ export default function ChatPage() {
         let replyText = "";
         let riskData: { level: string; score: number; tags: string[]; summary_for_admin: string } | null = null;
 
-        if (scenario === "community" && res.body) {
+        // 两端统一走 SSE 流式：按场景选择消息列表 setter
+        const setActiveMessages =
+          scenario === "university" ? setUniversityMessages : setCommunityMessages;
+
+        if (res.body) {
           // SSE 流式：边读边渲染
           const reader = res.body.getReader();
           const decoder = new TextDecoder("utf-8");
@@ -871,7 +875,7 @@ export default function ChatPage() {
                     replyText += evt.content;
                   }
                   const snapshot = replyText;
-                  setCommunityMessages((prev) =>
+                  setActiveMessages((prev) =>
                     prev.map((m) => (m.id === loadingId ? { ...m, content: snapshot } : m))
                   );
                 } else if (evt.type === "done") {
@@ -887,7 +891,7 @@ export default function ChatPage() {
           }
 
           const finalText = replyText;
-          setCommunityMessages((prev) =>
+          setActiveMessages((prev) =>
             prev.map((m) => (m.id === loadingId ? { ...m, content: finalText } : m))
           );
         } else {
@@ -1747,8 +1751,8 @@ export default function ChatPage() {
             {currentMessages.map((msg) => (
               <div key={msg.id}>
                 {msg.role === "assistant" ? (
-                  <div className="flex items-end gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
-                    <Avatar className="h-7 w-7 mb-1 flex-shrink-0">
+                  <div className="flex items-start gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <Avatar className="h-7 w-7 mt-1 flex-shrink-0">
                       {isCampus ? (
                         <>
                           <AvatarImage src="/ai-campus-avatar.png" alt="知心学姐" />
@@ -1772,7 +1776,7 @@ export default function ChatPage() {
                       )}
                     </Avatar>
                     <div
-                      className="rounded-2xl rounded-bl-sm px-4 py-3 max-w-md"
+                      className="rounded-2xl rounded-tl-sm px-4 py-3 max-w-md"
                       style={{
                         background: isCampus ? "rgba(30,41,59,0.85)" : "#ffffff",
                         border: `1px solid ${isCampus ? "rgba(6,182,212,0.15)" : "rgba(249,115,22,0.15)"}`,

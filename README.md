@@ -30,7 +30,9 @@ Intelligent_Ark/
 │   └── .env                # 环境变量配置
 │
 ├── frontend/
+│   ├── .env.local              # 前端环境变量（NEXT_PUBLIC_API_BASE 等）
 │   └── src/
+│       ├── middleware.ts            # Next.js 路由守卫（/chat、/admin 鉴权跳转）
 │       ├── app/
 │       │   ├── page.tsx            # 首页/落地页
 │       │   ├── login/              # C端登录/注册
@@ -121,6 +123,7 @@ npm run dev
 
 | 特性 | 实现方式 |
 |------|----------|
+| **三级 CORS 策略** | `ALLOWED_ORIGINS` 精确匹配 → `ALLOW_ANY_ORIGIN` 全放开 → 默认正则匹配任意 IP/域名 |
 | **跨 Tab 实时预警** | `localStorage.setItem` + `StorageEvent` 监听，零延迟跨标签同步 |
 | **路演稳定保障** | `dev_override` 参数跳过 LLM 调用，直接返回预设剧本，不受网络影响 |
 | **双路径对话** | 非流式（`/api/chat/stream`）+ SSE 流式（`/api/chat/stream-sse`），社区老人逐字可见 |
@@ -129,6 +132,7 @@ npm run dev
 | **分数校正锁** | 防止大模型 level 与 score 不一致，强制按分数区间修正 level |
 | **适老化设计** | 字号4档缩放、TTS朗读、按住说话、SOS一键求助、称呼偏好 |
 | **生产级鉴权** | JWT HS256 + bcrypt 密码哈希 + HttpOnly Cookie，`prod` 环境强制强密钥 |
+| **前端路由守卫** | Next.js middleware 统一拦截 `/chat`、`/admin` 未登录访问，自动重定向 |
 
 ---
 
@@ -139,20 +143,35 @@ npm run dev
 ZHIPU_API_KEY=your_zhipu_api_key      # 智谱 API Key（留空则走关键词兜底）
 ZHIPU_MODEL=glm-4-flash               # 对话模型（可改为 glm-4.7 等）
 ZHIPU_ASR_MODEL=glm-asr               # 语音转写模型
+ZHIPU_BASE_URL=                        # 智谱 API 基础地址（默认官方地址，一般无需修改）
 
 # 业务配置
 EXAM_DATE=2026-12-20                   # 考研/考试倒计时日期
 WEATHER_CITY=Baoding                   # 天气查询城市
+WEATHER_CITY_COORDS=City:lat,lon       # 自定义城市坐标（分号分隔多组，可选）
 COMMUNITY_HOTLINE=12345                # 社区服务热线
+CHAT_HISTORY_WINDOW=10                 # 每次对话携带的历史消息条数上限
 
 # 安全配置
 APP_ENV=dev                            # dev | prod（prod 时禁用 dev_override）
 JWT_SECRET=your-secret-key             # prod 必须配置 ≥32位强密钥
+JWT_EXPIRE_HOURS=168                   # JWT 过期时间（默认 7 天）
 ADMIN_INVITE_CODE=your-invite-code     # 管理员注册邀请码（不配置则注册关闭）
+SEED_DEMO_USERS=0                      # prod 下是否注入演示账号（1 = 注入）
 
 # 部署配置（可选）
 ALLOWED_ORIGINS=http://192.168.1.100:3000   # 精确指定允许的来源
 ALLOW_ANY_ORIGIN=1                           # 或直接放开所有来源（不带 credentials）
+LOG_LEVEL=INFO                               # 日志级别（DEBUG / INFO / WARNING / ERROR）
+ASR_TIMEOUT=30                               # 语音转写超时秒数
+ASR_MAX_BYTES=10485760                       # 单次 ASR 上传大小上限（默认 10MB）
+```
+
+#### 前端环境变量（`frontend/.env.local`）
+
+```env
+# 远程部署 / cpolar 穿透时，指向后端公网地址
+# NEXT_PUBLIC_API_BASE=https://your-backend-host.example.com
 ```
 
 ---
@@ -163,17 +182,23 @@ ALLOW_ANY_ORIGIN=1                           # 或直接放开所有来源（不
 |------|------|------|
 | 认证 | `POST /api/auth/c-login` | C端登录 |
 | 认证 | `POST /api/auth/c-register` | C端注册 |
+| 认证 | `POST /api/auth/c-logout` | C端退出登录 |
 | 认证 | `POST /api/auth/b-login` | B端管理员登录 |
 | 认证 | `POST /api/auth/b-register` | B端管理员注册（需邀请码） |
+| 认证 | `POST /api/auth/b-logout` | B端退出登录 |
+| 认证 | `GET /api/auth/me` | 获取当前登录用户信息 |
 | 对话 | `POST /api/chat/stream` | 非流式对话 |
 | 对话 | `POST /api/chat/stream-sse` | SSE 流式对话 |
 | 语音 | `POST /api/asr/transcribe` | 音频转文字 |
 | 历史 | `GET /api/chat/history` | 对话历史查询 |
+| 历史 | `DELETE /api/chat/history` | 清除对话历史 |
 | 管理 | `GET /api/admin/alerts` | 风险事件列表 |
 | 管理 | `POST /api/admin/alerts/{id}/handle` | 标记事件已处理 |
 | 工具 | `GET /api/weather` | 实时天气 |
 | 工具 | `GET /api/exam-countdown` | 考试倒计时 |
 | 工具 | `GET /api/scenario/context` | 场景聚合上下文 |
+| 运维 | `GET /` | 服务状态 |
+| 运维 | `GET /health` | 健康检查 |
 
 完整接口规范见 [Tech_Spec.md](PDRs/Tech_Spec.md)。
 

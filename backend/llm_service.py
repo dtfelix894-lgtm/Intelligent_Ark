@@ -26,11 +26,20 @@ from schemas import ChatResponse, RiskAssessment
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "")
-ZHIPU_MODEL = os.getenv("ZHIPU_MODEL", "glm-4-flash")
-ZHIPU_BASE_URL = os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-ZHIPU_TIMEOUT = float(os.getenv("ZHIPU_TIMEOUT", "60"))
-ZHIPU_TEMPERATURE = float(os.getenv("ZHIPU_TEMPERATURE", "0.7"))
+# 对话模型：优先读 LLM_*（可指向 Mimo 等任意 OpenAI 兼容服务），
+# 未配置时回退智谱 ZHIPU_*，保证旧 .env 不受影响。ASR 仍走 ZHIPU_*。
+ZHIPU_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("ZHIPU_API_KEY", "")
+ZHIPU_MODEL = os.getenv("LLM_MODEL") or os.getenv("ZHIPU_MODEL", "glm-4-flash")
+ZHIPU_BASE_URL = os.getenv("LLM_BASE_URL") or os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+ZHIPU_TIMEOUT = float(os.getenv("LLM_TIMEOUT") or os.getenv("ZHIPU_TIMEOUT", "60"))
+ZHIPU_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE") or os.getenv("ZHIPU_TEMPERATURE", "0.7"))
+# 关闭思考模型的 reasoning，首字延迟从 ~6s 降到 ~2s（Mimo 等思考模型必备）。
+# 回退智谱 glm 时请设 LLM_DISABLE_THINKING=0，避免发未知字段被拒。
+LLM_DISABLE_THINKING = (os.getenv("LLM_DISABLE_THINKING", "1") or "1").lower() not in ("0", "false", "no", "")
+
+
+def _thinking_payload() -> dict:
+    return {"thinking": {"type": "disabled"}} if LLM_DISABLE_THINKING else {}
 
 _BEIJING = pytz.timezone("Asia/Shanghai")
 
@@ -254,6 +263,7 @@ async def _call_zhipu(messages: list[dict]) -> tuple[str, RiskAssessment]:
         "stream": False,
         "temperature": ZHIPU_TEMPERATURE,
         "response_format": {"type": "json_object"},
+        **_thinking_payload(),
     }
 
     async with httpx.AsyncClient(timeout=ZHIPU_TIMEOUT) as client:
@@ -346,6 +356,56 @@ async def _do_chat(
         return _fallback_response(message, scenario)
 
 
+# ─── 流式收尾的轻量风险评估 ────────────────────────────────────────────────
+_RISK_ASSESS_PROMPT = """你是心理风险评估助手。根据【用户消息】和【陪伴助手回复】，对用户当前情绪风险做脱敏评估。
+只输出一个 JSON 对象，不要输出任何其它内容：
+{"level":"<green|yellow|red>","score":<0-100整数>,"tags":["<标签>"],"summary_for_admin":"<以【AI脱敏摘要】开头的简短摘要>"}
+风险等级：green(0-30) 情绪平稳；yellow(31-70) 轻度困扰(失眠/焦虑/压力/孤独等)；red(71-100) 严重危机(轻生念头/极度绝望/紧急健康异常)。"""
+
+
+async def _assess_risk_llm(message: str, reply: str, scenario: str) -> Optional[dict]:
+    """流式回复结束后做一次轻量风险评估，返回 risk_assessment dict；任何异常/空返回均返回 None 由关键词兜底。
+
+    该调用显式关思考走快路径（~1-2s），空返回天然由调用方兜底，不会破坏体验。
+    """
+    headers = {
+        "Authorization": f"Bearer {ZHIPU_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": ZHIPU_MODEL,
+        "messages": [
+            {"role": "system", "content": _RISK_ASSESS_PROMPT},
+            {"role": "user", "content": f"【用户消息】{message}\n【陪伴助手回复】{reply}"},
+        ],
+        "stream": False,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": "disabled"},
+        "max_tokens": 400,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=ZHIPU_TIMEOUT) as client:
+            r = await client.post(
+                f"{ZHIPU_BASE_URL}/chat/completions", headers=headers, json=payload
+            )
+            r.raise_for_status()
+            raw = r.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        data = json.loads(text)
+        if not isinstance(data, dict) or "level" not in data:
+            return None
+        return data
+    except Exception as exc:
+        logger.warning("轻量风险评估失败，走关键词兜底: %s", exc)
+        return None
+
+
 async def chat_stream_llm(
     user_id: str,
     message: str,
@@ -400,6 +460,7 @@ async def chat_stream_llm(
         "messages": messages,
         "stream": True,
         "temperature": ZHIPU_TEMPERATURE,
+        **_thinking_payload(),
     }
 
     full_text = ""
@@ -451,18 +512,21 @@ async def chat_stream_llm(
         }
         return
 
-    # 3. 事后风险评估：基于用户消息 + 完整回复的关键词兜底
-    fb = _build_fallback(message, scenario)
-    ra = fb["risk_assessment"]
-    locked_level, locked_score = _force_threshold_lock(ra["level"], ra["score"])
+    # 3. 事后风险评估：优先一次轻量 LLM 评估（个性化摘要），失败/空返回回退关键词兜底
+    reply_text = full_text.strip()
+    ra = await _assess_risk_llm(message, reply_text, scenario) if reply_text else None
+    if ra is None:
+        ra = _build_fallback(message, scenario)["risk_assessment"]
+    locked_level, locked_score = _force_threshold_lock(ra.get("level", "green"), ra.get("score", 15))
     yield {
         "type": "done",
-        "reply": full_text.strip() or fb["reply"],
+        "reply": reply_text or _build_fallback(message, scenario)["reply"],
         "risk_assessment": {
             "level": locked_level,
             "score": locked_score,
-            "tags": ra.get("tags", []),
-            "summary_for_admin": ra.get("summary_for_admin", ""),
+            "tags": ra.get("tags") or ["情绪平稳"],
+            "summary_for_admin": ra.get("summary_for_admin")
+                or "【AI脱敏摘要】该用户情绪平稳，无异常风险信号。",
         },
     }
 
