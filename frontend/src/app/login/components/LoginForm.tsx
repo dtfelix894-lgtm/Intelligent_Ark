@@ -84,12 +84,14 @@ const LoginForm = forwardRef<LoginFormHandle, LoginFormProps>(({ onSuccess }, re
       const currentUser = isSocial
         ? {
             role: "social" as const,
+            account,
             email: account,
             phone: "",
             displayName: "社会用户",
           }
         : {
             role: "student" as const,
+            account,
             studentId: account,
             school: "保定学院",
             degree: "本科生",

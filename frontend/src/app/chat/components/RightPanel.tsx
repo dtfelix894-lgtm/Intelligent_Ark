@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useScenario } from "@/lib/scenario-context";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
+import { EmotionShredder } from "./EmotionShredder";
 
 type RadioTrack = "jingju" | "pingshu" | "health";
 
@@ -50,7 +51,7 @@ function DailyHealingCapsule() {
 function CyberRelaxZone({
   onOpenGame,
 }: {
-  onOpenGame: (type: "muyu" | "typing") => void;
+  onOpenGame: (type: "shredder" | "typing") => void;
 }) {
   return (
     <Card className="rounded-2xl overflow-hidden" style={{ borderColor: "var(--panel-border)" }}>
@@ -66,16 +67,16 @@ function CyberRelaxZone({
         </p>
         <div className="grid grid-cols-2 gap-2">
           <button
-            onClick={() => onOpenGame("muyu")}
+            onClick={() => onOpenGame("shredder")}
             className="rounded-xl py-3 text-sm font-medium flex flex-col items-center gap-1 transition-all"
             style={{
-              background: "rgba(16,185,129,0.12)",
-              border: "1px solid rgba(16,185,129,0.25)",
-              color: "#6ee7b7",
+              background: "rgba(244,114,182,0.12)",
+              border: "1px solid rgba(244,114,182,0.25)",
+              color: "#f9a8d4",
             }}
           >
-            <span className="text-xl">🪵</span>
-            <span>敲电子木鱼</span>
+            <span className="text-xl">💥</span>
+            <span>情绪粉碎机</span>
           </button>
           <button
             onClick={() => onOpenGame("typing")}
@@ -128,7 +129,7 @@ function CampusSupportCard() {
 function UniversityPanels({
   onOpenGame,
 }: {
-  onOpenGame: (type: "muyu" | "typing") => void;
+  onOpenGame: (type: "shredder" | "typing") => void;
 }) {
   return (
     <div className="space-y-3">
@@ -140,68 +141,19 @@ function UniversityPanels({
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// 全屏游戏浮层（木鱼 + 打字发泄墙，状态完全自包含）
+// 全屏游戏浮层（情绪粉碎机 + 打字发泄墙，状态完全自包含）
 // ═══════════════════════════════════════════════════════════════════════
 
 const FLYING_COLORS = ["#60a5fa","#34d399","#a78bfa","#f472b6","#fbbf24","#f87171","#38bdf8","#4ade80","#fb923c"];
 interface FlyingChar { id: number; char: string; x: number; y: number; vx: number; vy: number; color: string; size: number; }
 
-const MUYU_MILESTONES: Record<number, string> = {
-  10: "初入佛门 🙏", 50: "小有精进 ✨", 100: "功德圆满 🌟",
-  500: "慧根深厚 🪷", 999: "修成正果 🎊", 2000: "得道升仙 👼",
-};
-
-interface FloatingText { id: number; text: string; color: string; }
-
 function GameOverlay({
   activeGame,
   onClose,
 }: {
-  activeGame: "muyu" | "typing";
+  activeGame: "shredder" | "typing";
   onClose: () => void;
 }) {
-  // ── 木鱼状态 ──────────────────────────────────────────────────────────
-  const [meritCount, setMeritCount] = useState<number>(() => {
-    try { return parseInt(localStorage.getItem("muyu_merit") || "0", 10) || 0; } catch { return 0; }
-  });
-  const [combo, setCombo] = useState(1);
-  const [bounce, setBounce] = useState(false);
-  const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
-  const lastClickRef = useRef(0);
-  const comboTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleStrike = useCallback(() => {
-    const now = Date.now();
-    const gap = now - lastClickRef.current;
-    lastClickRef.current = now;
-    const newCombo = gap < 800 ? combo + 1 : 1;
-    setCombo(newCombo);
-    if (comboTimerRef.current) clearTimeout(comboTimerRef.current);
-    comboTimerRef.current = setTimeout(() => setCombo(1), 900);
-
-    const bonus = newCombo >= 5 ? 3 : newCombo >= 3 ? 2 : 1;
-    const next = meritCount + bonus;
-    setMeritCount(next);
-    try { localStorage.setItem("muyu_merit", String(next)); } catch {}
-
-    setBounce(true);
-    setTimeout(() => setBounce(false), 140);
-
-    const milestone = MUYU_MILESTONES[next];
-    const floatText = milestone
-      ? milestone
-      : newCombo >= 5 ? `🔥 +${bonus}`
-      : newCombo >= 3 ? `⚡ +${bonus}`
-      : `+${bonus}`;
-    const floatColor = milestone ? "#fbbf24"
-      : newCombo >= 5 ? "#f87171"
-      : newCombo >= 3 ? "#fbbf24"
-      : "#6ee7b7";
-    const id = now + Math.random();
-    setFloatingTexts((prev) => [...prev, { id, text: floatText, color: floatColor }]);
-    setTimeout(() => setFloatingTexts((prev) => prev.filter((t) => t.id !== id)), 700);
-  }, [combo, meritCount]);
-
   // ── 打字发泄墙状态 ─────────────────────────────────────────────────────
   const [flyingChars, setFlyingChars] = useState<FlyingChar[]>([]);
   const flyCharIdRef = useRef(0);
@@ -234,22 +186,12 @@ function GameOverlay({
   };
 
   // ── 渲染 ───────────────────────────────────────────────────────────────
-  const glowColor = combo >= 5
-    ? "0 0 60px rgba(248,113,113,0.5), 0 0 120px rgba(248,113,113,0.2)"
-    : combo >= 3
-    ? "0 0 50px rgba(251,191,36,0.45), 0 0 100px rgba(251,191,36,0.2)"
-    : "0 0 40px rgba(251,191,36,0.25)";
-
   return (
     <>
       <style>{`
         @keyframes ark-fly-pc {
           0%   { transform: translate(0,0) scale(1);   opacity: 1; }
           100% { transform: translate(var(--vx),var(--vy)) scale(0.1); opacity: 0; }
-        }
-        @keyframes ark-float-up {
-          0%   { transform: translateY(0)  scale(1);   opacity: 1; }
-          100% { transform: translateY(-70px) scale(0.8); opacity: 0; }
         }
       `}</style>
       <div
@@ -269,77 +211,8 @@ function GameOverlay({
           退出游乐区
         </button>
 
-        {/* ── 木鱼 ── */}
-        {activeGame === "muyu" && (
-          <div className="flex flex-col items-center gap-6 select-none">
-            {/* 功德计数 */}
-            <div className="text-center">
-              <p className="text-sm mb-1" style={{ color: "rgba(110,231,183,0.6)" }}>累计功德</p>
-              <p
-                className="text-7xl font-black tabular-nums"
-                style={{
-                  color: "#6ee7b7",
-                  textShadow: "0 0 30px rgba(110,231,183,0.6), 0 0 60px rgba(110,231,183,0.3)",
-                }}
-              >
-                {meritCount.toLocaleString()}
-              </p>
-            </div>
-
-            {/* 连击提示 */}
-            <div className="h-6 flex items-center justify-center">
-              {combo >= 3 && (
-                <span
-                  className="text-sm font-bold px-3 py-0.5 rounded-full"
-                  style={{
-                    color: combo >= 5 ? "#f87171" : "#fbbf24",
-                    background: combo >= 5 ? "rgba(248,113,113,0.15)" : "rgba(251,191,36,0.12)",
-                    border: `1px solid ${combo >= 5 ? "rgba(248,113,113,0.3)" : "rgba(251,191,36,0.25)"}`,
-                  }}
-                >
-                  {combo >= 5 ? "🔥" : "⚡"} 连击 ×{combo}
-                </span>
-              )}
-            </div>
-
-            {/* 木鱼主体 */}
-            <div className="relative flex items-center justify-center">
-              {/* 浮字 */}
-              {floatingTexts.map((ft) => (
-                <div
-                  key={ft.id}
-                  className="absolute font-bold text-lg pointer-events-none whitespace-nowrap"
-                  style={{
-                    top: -20,
-                    color: ft.color,
-                    animation: "ark-float-up 0.65s ease-out forwards",
-                  }}
-                >
-                  {ft.text}
-                </div>
-              ))}
-              <button
-                onClick={handleStrike}
-                className={cn(
-                  "w-56 h-56 rounded-3xl flex items-center justify-center text-8xl",
-                  "cursor-pointer bg-gradient-to-br from-amber-700 via-amber-800 to-amber-900",
-                  "border-4 border-amber-600"
-                )}
-                style={{
-                  transform: bounce ? "scale(0.82)" : "scale(1)",
-                  transition: "transform 0.14s cubic-bezier(.36,.07,.19,.97)",
-                  boxShadow: `inset 0 -8px 20px rgba(0,0,0,0.4), inset 0 8px 20px rgba(255,255,255,0.1), ${glowColor}`,
-                }}
-              >
-                🪵
-              </button>
-            </div>
-
-            <p className="text-sm" style={{ color: "rgba(110,231,183,0.4)" }}>
-              快速连击有加成 · 功德永久保存 🌿
-            </p>
-          </div>
-        )}
+        {/* ── 情绪粉碎机 ── */}
+        {activeGame === "shredder" && <EmotionShredder />}
 
         {/* ── 打字发泄墙 ── */}
         {activeGame === "typing" && (
@@ -457,11 +330,11 @@ function FamilyPhotoCard() {
 export function RightPanel() {
   const { scenario } = useScenario();
   const [activeRadio, setActiveRadio] = useState<RadioTrack | null>(null);
-  const [activeGame, setActiveGame] = useState<"muyu" | "typing" | null>(null);
+  const [activeGame, setActiveGame] = useState<"shredder" | "typing" | null>(null);
 
   const radioAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  const handleOpenGame = useCallback((type: "muyu" | "typing") => {
+  const handleOpenGame = useCallback((type: "shredder" | "typing") => {
     setActiveGame(type);
   }, []);
 

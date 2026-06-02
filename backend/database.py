@@ -83,6 +83,17 @@ def init_db():
             conn.execute("ALTER TABLE user_profiles ADD COLUMN school_name TEXT")
         except sqlite3.OperationalError:
             pass  # 字段已存在
+        # 迁移：风险事件处理闭环字段（处理时间/处理人/动作/备注）
+        for col in (
+            "ALTER TABLE risk_events ADD COLUMN handled_at TEXT",
+            "ALTER TABLE risk_events ADD COLUMN handled_by TEXT",
+            "ALTER TABLE risk_events ADD COLUMN action TEXT",
+            "ALTER TABLE risk_events ADD COLUMN note TEXT",
+        ):
+            try:
+                conn.execute(col)
+            except sqlite3.OperationalError:
+                pass  # 字段已存在
 
 
 # ─── 密码工具 ────────────────────────────────────────────────────────────────
@@ -192,6 +203,154 @@ def verify_user(account: str, plain_password: str) -> Optional[dict]:
         }
 
 
+def count_users_by_role(role: str) -> int:
+    """统计指定角色的注册用户数（social=独居老人，student=学生）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE role = ?",
+            (role,),
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+
+def list_users_with_stats(role: str, scenario: str) -> list[dict]:
+    """
+    账号管理列表：指定角色的注册用户 + 资料 + 请求/风险统计。
+    - 高校(student) 带 school/student_id 双标识；社区(social) 带 email。
+    - request_count：该 scenario 下用户提问条数；last_active：最近一次提问时间。
+    - red_count/yellow_count：该 scenario 下历史红/黄码次数。
+    """
+    with get_conn() as conn:
+        users = conn.execute(
+            "SELECT u.id, u.account, u.role, u.created_at, "
+            "p.school, p.student_id, p.qq_email "
+            "FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id "
+            "WHERE u.role = ? ORDER BY u.created_at DESC",
+            (role,),
+        ).fetchall()
+
+        chat_rows = conn.execute(
+            "SELECT user_id, COUNT(*) AS n, MAX(created_at) AS last FROM chat_messages "
+            "WHERE role = 'user' AND scenario = ? GROUP BY user_id",
+            (scenario,),
+        ).fetchall()
+        chat_map = {r["user_id"]: (r["n"], r["last"]) for r in chat_rows}
+
+        risk_rows = conn.execute(
+            "SELECT user_id, level, COUNT(*) AS n FROM risk_events "
+            "WHERE scenario = ? AND level IN ('red','yellow') GROUP BY user_id, level",
+            (scenario,),
+        ).fetchall()
+        risk_map: dict[int, dict[str, int]] = {}
+        for r in risk_rows:
+            risk_map.setdefault(r["user_id"], {})[r["level"]] = r["n"]
+
+    result = []
+    for u in users:
+        n, last = chat_map.get(u["id"], (0, None))
+        rc = risk_map.get(u["id"], {})
+        result.append({
+            "id": u["id"],
+            "account": u["account"],
+            "role": u["role"],
+            "created_at": u["created_at"],
+            "school": u["school"],
+            "student_id": u["student_id"] or u["account"],
+            "email": u["qq_email"] or u["account"],
+            "request_count": n,
+            "last_active": last,
+            "red_count": rc.get("red", 0),
+            "yellow_count": rc.get("yellow", 0),
+        })
+    return result
+
+
+def get_risk_trend(scenario: str, days: int = 7) -> list[dict]:
+    """
+    风险走势：近 days 天，每天的黄码/红码预警数 + 当天平均风险分。
+    空白天补 0（avg_score 为 None），按本地日期对齐 created_at。
+    """
+    from datetime import datetime, timedelta
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT date(created_at) AS d, level, COUNT(*) AS n, SUM(score) AS s "
+            "FROM risk_events WHERE scenario = ? AND created_at >= datetime('now','localtime', ?) "
+            "GROUP BY date(created_at), level",
+            (scenario, f"-{days - 1} days"),
+        ).fetchall()
+
+    by_date: dict[str, dict] = {}
+    for r in rows:
+        e = by_date.setdefault(r["d"], {"yellow": 0, "red": 0, "green": 0, "score_sum": 0, "count": 0})
+        e[r["level"]] = r["n"]
+        e["score_sum"] += r["s"] or 0
+        e["count"] += r["n"]
+
+    today = datetime.now().date()
+    result = []
+    for i in range(days - 1, -1, -1):
+        day = today - timedelta(days=i)
+        key = day.isoformat()
+        e = by_date.get(key)
+        if e and e["count"]:
+            avg = round(e["score_sum"] / e["count"])
+            result.append({"date": key, "label": f"{day.month}/{day.day}",
+                           "yellow": e["yellow"], "red": e["red"],
+                           "count": e["count"], "avg_score": avg})
+        else:
+            result.append({"date": key, "label": f"{day.month}/{day.day}",
+                           "yellow": 0, "red": 0, "count": 0, "avg_score": None})
+    return result
+
+
+def get_risk_tag_distribution(scenario: str, limit: int = 7) -> list[dict]:
+    """风险标签分布：聚合 risk_events.tags（JSON 数组）的频次，返回 top limit。"""
+    from collections import Counter
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT tags FROM risk_events WHERE scenario = ?",
+            (scenario,),
+        ).fetchall()
+
+    counter: Counter = Counter()
+    for r in rows:
+        try:
+            for t in _json.loads(r["tags"]):
+                t = (t or "").strip()
+                if t:
+                    counter[t] += 1
+        except Exception:
+            continue
+    return [{"tag": t, "count": n} for t, n in counter.most_common(limit)]
+
+
+def get_user_activity(user_id: int, scenario: str, days: int = 7) -> dict:
+    """
+    单用户请求明细：总次数 + 首次/最近时间 + 最近 days 天的每日请求分布。
+    """
+    with get_conn() as conn:
+        summary = conn.execute(
+            "SELECT COUNT(*) AS n, MIN(created_at) AS first, MAX(created_at) AS last "
+            "FROM chat_messages WHERE user_id = ? AND role = 'user' AND scenario = ?",
+            (user_id, scenario),
+        ).fetchone()
+        daily_rows = conn.execute(
+            "SELECT date(created_at) AS d, COUNT(*) AS n FROM chat_messages "
+            "WHERE user_id = ? AND role = 'user' AND scenario = ? "
+            "AND created_at >= datetime('now', ?) "
+            "GROUP BY date(created_at) ORDER BY d",
+            (user_id, scenario, f"-{days} days"),
+        ).fetchall()
+    return {
+        "request_count": summary["n"] if summary else 0,
+        "first_active": summary["first"] if summary else None,
+        "last_active": summary["last"] if summary else None,
+        "daily": [{"date": r["d"], "count": r["n"]} for r in daily_rows],
+    }
+
+
 import json as _json
 
 
@@ -252,8 +411,8 @@ def save_risk_event(
 ) -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO risk_events (user_id, scenario, level, score, tags, summary) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO risk_events (user_id, scenario, level, score, tags, summary, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))",
             (user_id, scenario, level, score, _json.dumps(tags, ensure_ascii=False), summary),
         )
         return cur.lastrowid
@@ -262,11 +421,12 @@ def save_risk_event(
 def list_risk_events(
     level: Optional[str] = None,
     scenario: Optional[str] = None,
+    handled: Optional[bool] = None,
     limit: int = 100,
 ) -> list[dict]:
     sql = (
         "SELECT r.id, r.user_id, u.account, r.scenario, r.level, r.score, "
-        "r.tags, r.summary, r.handled, r.created_at "
+        "r.tags, r.summary, r.handled, r.handled_at, r.handled_by, r.action, r.note, r.created_at "
         "FROM risk_events r JOIN users u ON u.id = r.user_id WHERE 1=1"
     )
     params: list = []
@@ -276,6 +436,9 @@ def list_risk_events(
     if scenario:
         sql += " AND r.scenario = ?"
         params.append(scenario)
+    if handled is not None:
+        sql += " AND r.handled = ?"
+        params.append(1 if handled else 0)
     sql += " ORDER BY r.created_at DESC LIMIT ?"
     params.append(limit)
 
@@ -297,18 +460,58 @@ def list_risk_events(
             "tags": tags,
             "summary": r["summary"],
             "handled": bool(r["handled"]),
+            "handled_at": r["handled_at"],
+            "handled_by": r["handled_by"],
+            "action": r["action"],
+            "note": r["note"],
             "created_at": r["created_at"],
         })
     return result
 
 
-def mark_risk_event_handled(event_id: int) -> bool:
+def mark_risk_event_handled(
+    event_id: int,
+    handled_by: Optional[str] = None,
+    action: Optional[str] = None,
+    note: Optional[str] = None,
+) -> bool:
     with get_conn() as conn:
         cur = conn.execute(
-            "UPDATE risk_events SET handled = 1 WHERE id = ?",
-            (event_id,),
+            "UPDATE risk_events SET handled = 1, handled_at = datetime('now','localtime'), "
+            "handled_by = ?, action = ?, note = ? WHERE id = ?",
+            (handled_by, action, note, event_id),
         )
         return cur.rowcount > 0
+
+
+def list_user_interventions(user_id: int, scenario: str, limit: int = 50) -> list[dict]:
+    """单用户已处理的干预记录（红/黄码），供账号管理记录展示。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, level, score, tags, summary, action, note, handled_by, handled_at, created_at "
+            "FROM risk_events WHERE user_id = ? AND scenario = ? AND handled = 1 "
+            "ORDER BY handled_at DESC LIMIT ?",
+            (user_id, scenario, limit),
+        ).fetchall()
+    result = []
+    for r in rows:
+        try:
+            tags = _json.loads(r["tags"])
+        except Exception:
+            tags = []
+        result.append({
+            "id": r["id"],
+            "level": r["level"],
+            "score": r["score"],
+            "tags": tags,
+            "summary": r["summary"],
+            "action": r["action"],
+            "note": r["note"],
+            "handled_by": r["handled_by"],
+            "handled_at": r["handled_at"],
+            "created_at": r["created_at"],
+        })
+    return result
 
 
 def get_admin_profile(worker_id: str) -> Optional[dict]:

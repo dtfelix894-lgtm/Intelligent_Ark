@@ -28,8 +28,14 @@ from database import (
     save_risk_event,
     list_risk_events,
     mark_risk_event_handled,
+    list_user_interventions,
     get_recent_chat_history,
     clear_chat_history,
+    count_users_by_role,
+    list_users_with_stats,
+    get_user_activity,
+    get_risk_trend,
+    get_risk_tag_distribution,
 )
 from auth import (
     create_access_token,
@@ -525,6 +531,33 @@ async def asr_transcribe(
     return {"text": text}
 
 
+class TtsRequest(BaseModel):
+    text: str
+    scenario: str = "community"
+
+
+@app.post("/api/tts")
+async def tts_synthesize(
+    req: TtsRequest,
+    user: dict = Depends(require_user),
+):
+    from tts_service import synthesize_speech
+
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="文本为空")
+    try:
+        audio = await synthesize_speech(text, scenario=req.scenario)
+    except RuntimeError as exc:
+        logger.warning("TTS 失败 user=%s: %s", user.get("id"), exc)
+        raise HTTPException(status_code=502, detail=str(exc))
+    return Response(
+        content=audio,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/api/chat/history")
 async def chat_history(
     scenario: str = Query(..., regex="^(university|community)$"),
@@ -549,19 +582,86 @@ async def chat_history_clear(
 async def admin_alerts(
     level: Optional[str] = Query(None, regex="^(green|yellow|red)$"),
     scenario: Optional[str] = Query(None, regex="^(university|community)$"),
+    handled: Optional[bool] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     admin: dict = Depends(require_admin),
 ):
-    events = list_risk_events(level=level, scenario=scenario, limit=limit)
+    events = list_risk_events(level=level, scenario=scenario, handled=handled, limit=limit)
     return {"items": events, "total": len(events)}
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(
+    scenario: str = Query(..., regex="^(university|community)$"),
+    admin: dict = Depends(require_admin),
+):
+    # community → social（独居老人）；university → student（学生）
+    role = "social" if scenario == "community" else "student"
+    return {"total_users": count_users_by_role(role)}
+
+
+@app.get("/api/admin/users")
+async def admin_users(
+    scenario: str = Query(..., regex="^(university|community)$"),
+    admin: dict = Depends(require_admin),
+):
+    role = "social" if scenario == "community" else "student"
+    return {"items": list_users_with_stats(role, scenario)}
+
+
+@app.get("/api/admin/users/{user_id}/activity")
+async def admin_user_activity(
+    user_id: int,
+    scenario: str = Query(..., regex="^(university|community)$"),
+    admin: dict = Depends(require_admin),
+):
+    return get_user_activity(user_id, scenario)
+
+
+@app.get("/api/admin/users/{user_id}/interventions")
+async def admin_user_interventions(
+    user_id: int,
+    scenario: str = Query(..., regex="^(university|community)$"),
+    admin: dict = Depends(require_admin),
+):
+    return {"items": list_user_interventions(user_id, scenario)}
+
+
+@app.get("/api/admin/risk-trend")
+async def admin_risk_trend(
+    scenario: str = Query(..., regex="^(university|community)$"),
+    days: int = Query(7, ge=1, le=30),
+    admin: dict = Depends(require_admin),
+):
+    return {"items": get_risk_trend(scenario, days)}
+
+
+@app.get("/api/admin/risk-tags")
+async def admin_risk_tags(
+    scenario: str = Query(..., regex="^(university|community)$"),
+    limit: int = Query(7, ge=1, le=20),
+    admin: dict = Depends(require_admin),
+):
+    return {"items": get_risk_tag_distribution(scenario, limit)}
+
+
+class AlertHandleRequest(BaseModel):
+    action: Optional[str] = None
+    note: Optional[str] = None
 
 
 @app.post("/api/admin/alerts/{event_id}/handle")
 async def admin_alert_handle(
     event_id: int,
+    req: AlertHandleRequest = AlertHandleRequest(),
     admin: dict = Depends(require_admin),
 ):
-    ok = mark_risk_event_handled(event_id)
+    ok = mark_risk_event_handled(
+        event_id,
+        handled_by=admin.get("account"),
+        action=req.action,
+        note=req.note,
+    )
     if not ok:
         raise HTTPException(status_code=404, detail="风险事件不存在")
     return {"success": True}

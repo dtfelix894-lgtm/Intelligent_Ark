@@ -32,9 +32,10 @@ import { useScenario } from "@/lib/scenario-context";
 import { apiFetch, getToken, clearToken } from "@/lib/api";
 import { LeftPanel } from "./components/LeftPanel";
 import { RightPanel } from "./components/RightPanel";
+import { EmotionShredder } from "./components/EmotionShredder";
 import type { ChatMessage } from "@/types";
 import { cn } from "@/lib/utils";
-import { Smile, Heart, Lock, LogOut, GraduationCap, Building2, Hash, Menu, Music, Volume2, Phone, AlertCircle, RefreshCw, Mic, MicOff, Keyboard } from "lucide-react";
+import { Smile, Heart, Lock, LogOut, GraduationCap, Building2, Hash, Menu, Music, Volume2, Phone, AlertCircle, RefreshCw, Mic, MicOff, Keyboard, Loader2 } from "lucide-react";
 
 // 将字符串稳定映射为非负整数，作为预警卡片的唯一 id
 function hashCode(s: string): number {
@@ -48,6 +49,7 @@ function hashCode(s: string): number {
 // Mock 用户数据类型定义
 interface StudentUser {
   role: "student";
+  account?: string; // 登录账号，老人/学生身份的稳定标识
   school: string;
   degree: string;
   studentId: string;
@@ -56,6 +58,7 @@ interface StudentUser {
 
 interface SocialUser {
   role: "social";
+  account?: string; // 登录账号，老人身份的稳定标识
   phone: string;
   email?: string;
   displayName: string;
@@ -66,6 +69,7 @@ type CurrentUser = StudentUser | SocialUser;
 // Mock 用户数据 - 模拟当前登录用户
 const MOCK_USER_STUDENT: StudentUser = {
   role: "student",
+  account: "2023001122",
   school: "保定学院",
   degree: "本科生",
   studentId: "2023001122",
@@ -74,6 +78,7 @@ const MOCK_USER_STUDENT: StudentUser = {
 
 const MOCK_USER_SOCIAL: SocialUser = {
   role: "social",
+  account: "138****5678",
   phone: "138****5678",
   email: "zhang_senior@example.com",
   displayName: "社区用户",
@@ -254,15 +259,7 @@ export default function ChatPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // 赛博解压游戏全屏状态
-  const [activeGame, setActiveGame] = useState<null | "muyu" | "typing">(null);
-  // 木鱼：功德计数 + 连击
-  const [muyuCount, setMuyuCount] = useState<number>(() => {
-    try { return parseInt(localStorage.getItem("muyu_merit") || "0", 10) || 0; } catch { return 0; }
-  });
-  const [muyuCombo, setMuyuCombo] = useState(1);
-  const [muyuBounce, setMuyuBounce] = useState(false);
-  const muyuLastClickRef = useRef(0);
-  const muyuComboTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activeGame, setActiveGame] = useState<null | "shredder" | "typing">(null);
   // 打字发泄墙：飞字列表
   interface FlyingChar { id: number; char: string; x: number; y: number; vx: number; vy: number; color: string; size: number; }
   const [flyingChars, setFlyingChars] = useState<FlyingChar[]>([]);
@@ -277,6 +274,14 @@ export default function ChatPage() {
   const [playingRadio, setPlayingRadio] = useState<string | null>(null);
   // 能量电台 + 正念放松站：统一的 Refs 字典映射（彻底告别 getElementById）
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement | null }>({});
+  // P2.2 TTS：服务端神经语音（MiMo）播放用的 audio 元素 + 当前 objectURL
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsUrlRef = useRef<string | null>(null);
+  // A：点击朗读后的合成中状态（用于按钮 loading + 可取消） + 取消用的 AbortController
+  const ttsAbortRef = useRef<AbortController | null>(null);
+  // B：回复落定后后台预合成的音频缓存（msgId → objectURL）+ 正在预合成的 msgId 去重集合
+  const ttsCacheRef = useRef<Map<number, string>>(new Map());
+  const ttsPrefetchingRef = useRef<Set<number>>(new Set());
   // 从 localStorage 读取登录用户数据，未读到则使用 Mock 数据兜底
   const [currentUser] = useState<CurrentUser>(() => {
     try {
@@ -311,6 +316,8 @@ export default function ChatPage() {
   const [honorificDialogOpen, setHonorificDialogOpen] = useState(false);
   // P2.2 TTS 当前正在朗读的消息 id
   const [speakingMsgId, setSpeakingMsgId] = useState<number | null>(null);
+  // A：当前正在合成（等待 TTS 返回）的消息 id —— 用于按钮显示"合成中…"
+  const [ttsLoadingMsgId, setTtsLoadingMsgId] = useState<number | null>(null);
   // 微信风格：文字/语音模式切换（仅 community）
   const [voiceMode, setVoiceMode] = useState(false);
   // 按住说话：正在按压中
@@ -426,6 +433,11 @@ export default function ChatPage() {
       try {
         window.speechSynthesis?.cancel();
       } catch {}
+      if (ttsAudioRef.current) { ttsAudioRef.current.onended = null; ttsAudioRef.current.onerror = null; try { ttsAudioRef.current.pause(); } catch {} ttsAudioRef.current = null; }
+      if (ttsUrlRef.current) { try { URL.revokeObjectURL(ttsUrlRef.current); } catch {} ttsUrlRef.current = null; }
+      try { ttsAbortRef.current?.abort(); } catch {}
+      ttsCacheRef.current.forEach((u) => { try { URL.revokeObjectURL(u); } catch {} });
+      ttsCacheRef.current.clear();
       try { scriptNodeRef.current?.disconnect(); } catch {}
       try { sourceNodeRef.current?.disconnect(); } catch {}
       try { audioCtxRef.current?.close(); } catch {}
@@ -438,21 +450,132 @@ export default function ChatPage() {
       try {
         window.speechSynthesis?.cancel();
       } catch {}
+      if (ttsAudioRef.current) { ttsAudioRef.current.onended = null; ttsAudioRef.current.onerror = null; try { ttsAudioRef.current.pause(); } catch {} ttsAudioRef.current = null; }
+      if (ttsUrlRef.current) { try { URL.revokeObjectURL(ttsUrlRef.current); } catch {} ttsUrlRef.current = null; }
+      try { ttsAbortRef.current?.abort(); } catch {}
+      ttsCacheRef.current.forEach((u) => { try { URL.revokeObjectURL(u); } catch {} });
+      ttsCacheRef.current.clear();
       setSpeakingMsgId(null);
+      setTtsLoadingMsgId(null);
     }
   }, [scenario]);
 
-  const speakMessage = (msgId: number, content: string) => {
+  // 停止一切朗读：服务端音频 + 浏览器 Web Speech
+  const stopSpeaking = () => {
+    try { window.speechSynthesis?.cancel(); } catch {}
+    const audio = ttsAudioRef.current;
+    if (audio) {
+      // 先摘掉处理器，避免 pause/revoke 触发 error 事件级联到 Web Speech 兜底
+      audio.onended = null;
+      audio.onerror = null;
+      try { audio.pause(); } catch {}
+      ttsAudioRef.current = null;
+    }
+    if (ttsUrlRef.current) {
+      try { URL.revokeObjectURL(ttsUrlRef.current); } catch {}
+      ttsUrlRef.current = null;
+    }
+  };
+
+  // 播放一个（已缓存或刚合成的）服务端音频 objectURL。
+  // URL 归 ttsCacheRef 所有：停止时只 pause、不撤销，统一在清理时撤销，保证可重复播放。
+  const playTtsUrl = async (msgId: number, url: string, content: string) => {
+    const audio = new Audio(url);
+    ttsAudioRef.current = audio;
+    audio.onended = () => {
+      ttsAudioRef.current = null;
+      setSpeakingMsgId((cur) => (cur === msgId ? null : cur));
+    };
+    audio.onerror = () => {
+      ttsAudioRef.current = null;
+      setSpeakingMsgId((cur) => (cur === msgId ? null : cur));
+      speakViaWebSpeech(msgId, content);
+    };
+    setSpeakingMsgId(msgId);
+    await audio.play();
+  };
+
+  // B：回复落定后后台静默预合成 TTS，存入缓存；用户点朗读时直接秒播
+  const prefetchTts = useCallback((msgId: number, content: string) => {
+    if (scenario !== "community") return;
+    if (!content || content === "正在输入..." || content === "__TIMEOUT__") return;
+    if (ttsCacheRef.current.has(msgId) || ttsPrefetchingRef.current.has(msgId)) return;
+    ttsPrefetchingRef.current.add(msgId);
+    apiFetch("/api/tts", { method: "POST", side: "c", body: { text: content, scenario } as any })
+      .then(async (res) => {
+        if (res.ok) {
+          const blob = await res.blob();
+          ttsCacheRef.current.set(msgId, URL.createObjectURL(blob));
+        }
+      })
+      .catch(() => {})
+      .finally(() => ttsPrefetchingRef.current.delete(msgId));
+  }, [scenario]);
+
+  // 点按朗读：community 优先走服务端神经 TTS（活人感），失败/未配置则回退浏览器 Web Speech
+  const speakMessage = async (msgId: number, content: string) => {
+    // 再次点击正在朗读的 = 停止
+    if (speakingMsgId === msgId) {
+      stopSpeaking();
+      setSpeakingMsgId(null);
+      return;
+    }
+    // A：再次点击正在"合成中"的同一条 = 取消合成
+    if (ttsLoadingMsgId === msgId) {
+      ttsAbortRef.current?.abort();
+      return;
+    }
+    stopSpeaking();
+
+    if (scenario === "community") {
+      // B：命中预合成缓存 → 直接秒播，无需等待 / 无 loading
+      const cached = ttsCacheRef.current.get(msgId);
+      if (cached) {
+        try {
+          await playTtsUrl(msgId, cached, content);
+          return;
+        } catch {
+          // 播放失败（如自动播放策略）→ 落到下方 Web Speech 兜底
+        }
+      } else {
+        // 未命中 → 现场合成，A：显示"合成中…" + 可取消
+        const controller = new AbortController();
+        ttsAbortRef.current = controller;
+        setTtsLoadingMsgId(msgId);
+        try {
+          const res = await apiFetch("/api/tts", {
+            method: "POST",
+            side: "c",
+            body: { text: content, scenario } as any,
+            signal: controller.signal,
+          });
+          if (res.ok) {
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            ttsCacheRef.current.set(msgId, url); // 顺手缓存，二次点击秒播
+            await playTtsUrl(msgId, url, content);
+            return;
+          }
+          // 非 2xx（含未配置 key 的 502）→ 回退
+        } catch (e: any) {
+          if (e?.name === "AbortError") return; // 用户主动取消，不回退、不报错
+          // 其它网络/播放异常 → 回退
+        } finally {
+          setTtsLoadingMsgId((cur) => (cur === msgId ? null : cur));
+          if (ttsAbortRef.current === controller) ttsAbortRef.current = null;
+        }
+      }
+    }
+    speakViaWebSpeech(msgId, content);
+  };
+
+  // 浏览器内置 Web Speech 朗读（兜底）
+  const speakViaWebSpeech = (msgId: number, content: string) => {
     if (typeof window === "undefined" || !("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
       toast({ title: "当前浏览器不支持朗读", description: "建议换用系统自带浏览器", duration: 2200 });
       return;
     }
     const synth = window.speechSynthesis;
-    if (speakingMsgId === msgId) {
-      synth.cancel();
-      setSpeakingMsgId(null);
-      return;
-    }
     synth.cancel();
 
     const doSpeak = () => {
@@ -805,10 +928,12 @@ export default function ChatPage() {
         : null;
 
       try {
+        // 以登录账号为稳定身份标识；旧数据兜底到 studentId/phone（不再用 Date.now，避免同一用户多 ID）
         const userIdentifier =
+          currentUser.account ||
           (currentUser as StudentUser).studentId ||
           (currentUser as SocialUser).phone ||
-          String(Date.now());
+          "未知用户";
 
         const endpoint = "/api/chat/stream-sse";
 
@@ -908,6 +1033,11 @@ export default function ChatPage() {
           }
         }
 
+        // B：社区端回复落定后，后台预合成 TTS，用户点"朗读"时直接秒播
+        if (scenario === "community") {
+          prefetchTts(loadingId, replyText);
+        }
+
         const now = new Date().toISOString();
 
         if (riskData && (riskData.level === "red" || riskData.level === "yellow")) {
@@ -957,7 +1087,7 @@ export default function ChatPage() {
         setIsLoading(false);
       }
     },
-    [isLoading, scenario]
+    [isLoading, scenario, prefetchTts]
   );
 
   // community 超时气泡 → 点击重试：移除旧气泡 + 重发
@@ -998,6 +1128,13 @@ export default function ChatPage() {
 
   const handleDevAction = (type: string) => {
     if (type === "reset") {
+      // 重置会换掉所有消息 id，旧的预合成音频缓存随之失效，统一清掉避免泄漏/错播
+      stopSpeaking();
+      try { ttsAbortRef.current?.abort(); } catch {}
+      ttsCacheRef.current.forEach((u) => { try { URL.revokeObjectURL(u); } catch {} });
+      ttsCacheRef.current.clear();
+      setSpeakingMsgId(null);
+      setTtsLoadingMsgId(null);
       if (scenario === "university") {
         setUniversityMessages([
           { id: Date.now(), role: "assistant", content: "系统已重置，让我们重新开始吧！" },
@@ -1016,42 +1153,11 @@ export default function ChatPage() {
   };
 
   // ── 全屏弹层 handlers ──────────────────────────────────────────
-  const openGame = (game: "muyu" | "typing") => {
+  const openGame = (game: "shredder" | "typing") => {
     setActiveGame(game);
     setMobileMenuOpen(false);
   };
   const closeGame = () => setActiveGame(null);
-
-  // ── 木鱼：连击 + 功德计数 ──────────────────────────────────────
-  const MUYU_MILESTONES: Record<number, string> = {
-    10: "初入佛门 🙏", 50: "小有精进 ✨", 100: "功德圆满 🌟",
-    500: "慧根深厚 🪷", 999: "修成正果 🎊", 2000: "得道升仙 👼",
-  };
-  const handleMuyuClick = () => {
-    const now = Date.now();
-    const gap = now - muyuLastClickRef.current;
-    muyuLastClickRef.current = now;
-    const newCombo = gap < 800 ? muyuCombo + 1 : 1;
-    setMuyuCombo(newCombo);
-    if (muyuComboTimerRef.current) clearTimeout(muyuComboTimerRef.current);
-    muyuComboTimerRef.current = setTimeout(() => setMuyuCombo(1), 900);
-    const bonus = newCombo >= 5 ? 3 : newCombo >= 3 ? 2 : 1;
-    const next = muyuCount + bonus;
-    setMuyuCount(next);
-    try { localStorage.setItem("muyu_merit", String(next)); } catch {}
-    setMuyuBounce(true);
-    setTimeout(() => setMuyuBounce(false), 130);
-    const milestone = MUYU_MILESTONES[next];
-    if (milestone) {
-      toast({ title: milestone, description: `累计 ${next} 功德`, duration: 2000 });
-    } else if (newCombo >= 5) {
-      toast({ title: `🔥 疯狂连击 ×${newCombo}！`, description: `功德 +${bonus}`, duration: 600 });
-    } else if (newCombo >= 3) {
-      toast({ title: `⚡ 连击 ×${newCombo}`, description: `功德 +${bonus}`, duration: 500 });
-    } else {
-      toast({ title: "功德 +1", description: "🙏 心诚则灵", duration: 700 });
-    }
-  };
 
   // ── 打字发泄墙：每次输入生成飞字 ──────────────────────────────
   const FLYING_COLORS = ["#60a5fa","#34d399","#a78bfa","#f472b6","#fbbf24","#f87171","#38bdf8","#4ade80","#fb923c"];
@@ -1360,7 +1466,7 @@ export default function ChatPage() {
                         </p>
                         <div className="grid grid-cols-2 gap-2">
                           {[
-                            { icon: "🪵", label: "敲电子木鱼", game: "muyu" as const },
+                            { icon: "💥", label: "情绪粉碎机", game: "shredder" as const },
                             { icon: "⌨️", label: "打字发泄墙", game: "typing" as const },
                           ].map(({ icon, label, game }) => (
                             <button
@@ -1808,10 +1914,24 @@ export default function ChatPage() {
                                 color: speakingMsgId === msg.id ? "#ffffff" : "#c2410c",
                                 border: "1px solid rgba(249,115,22,0.3)",
                               }}
-                              aria-label={speakingMsgId === msg.id ? "停止朗读" : "朗读"}
+                              aria-label={
+                                ttsLoadingMsgId === msg.id
+                                  ? "取消合成"
+                                  : speakingMsgId === msg.id
+                                    ? "停止朗读"
+                                    : "朗读"
+                              }
                             >
-                              <Volume2 className="w-3.5 h-3.5" />
-                              {speakingMsgId === msg.id ? "停止" : "朗读"}
+                              {ttsLoadingMsgId === msg.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Volume2 className="w-3.5 h-3.5" />
+                              )}
+                              {ttsLoadingMsgId === msg.id
+                                ? "合成中…"
+                                : speakingMsgId === msg.id
+                                  ? "停止"
+                                  : "朗读"}
                             </button>
                           )}
                         </>
@@ -2284,36 +2404,8 @@ export default function ChatPage() {
               ×
             </button>
 
-            {/* ── 木鱼 ── */}
-            {activeGame === "muyu" && (
-              <div className="flex flex-col items-center gap-4 select-none">
-                {/* 功德计数 */}
-                <div className="text-6xl font-bold tabular-nums" style={{ color: "#fbbf24" }}>
-                  {muyuCount.toLocaleString()}
-                </div>
-                <div className="text-white/40 text-xs tracking-widest">功 德 值</div>
-                {/* 连击提示 */}
-                {muyuCombo >= 3 && (
-                  <div className="text-sm font-bold animate-pulse" style={{ color: muyuCombo >= 5 ? "#f87171" : "#fbbf24" }}>
-                    {muyuCombo >= 5 ? "🔥" : "⚡"} 连击 ×{muyuCombo}
-                  </div>
-                )}
-                {/* 木鱼主体 */}
-                <div
-                  className="text-9xl cursor-pointer"
-                  style={{
-                    userSelect: "none",
-                    transform: muyuBounce ? "scale(0.80)" : "scale(1)",
-                    transition: "transform 0.13s cubic-bezier(.36,.07,.19,.97)",
-                    filter: muyuCombo >= 5 ? "drop-shadow(0 0 18px #f87171)" : muyuCombo >= 3 ? "drop-shadow(0 0 12px #fbbf24)" : "none",
-                  }}
-                  onClick={handleMuyuClick}
-                >
-                  🪵
-                </div>
-                <p className="text-white/40 text-xs">快速连击有加成 · 功德永久保存</p>
-              </div>
-            )}
+            {/* ── 情绪粉碎机 ── */}
+            {activeGame === "shredder" && <EmotionShredder />}
 
             {/* ── 打字发泄墙 ── */}
             {activeGame === "typing" && (
