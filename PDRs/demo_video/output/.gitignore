@@ -1,0 +1,5 @@
+# 录制产物不入库（视频文件大）
+*.webm
+*.mp4
+_raw/
+demo_voice.wav
