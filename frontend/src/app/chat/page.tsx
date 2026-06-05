@@ -788,7 +788,7 @@ export default function ChatPage() {
     try {
       const fd = new FormData();
       fd.append("file", wav, "voice.wav");
-      const res = await apiFetch("/api/asr/transcribe", { method: "POST", body: fd });
+      const res = await apiFetch("/api/asr/transcribe", { method: "POST", side: "c", body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const detail = (data && data.detail) || `转写失败 (${res.status})`;

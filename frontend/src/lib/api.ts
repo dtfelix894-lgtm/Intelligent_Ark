@@ -57,12 +57,19 @@ export function clearToken(side: Side) {
 }
 
 /**
- * 自动挑选最合适的 token：优先使用 side 指定的，
- * 未指定时按 b → c 顺序回退（管理端页面也可调 C 端接口）。
+ * 自动挑选最合适的 token：优先使用 side 指定的。
+ * 未指定时按当前路由推断：/admin* 页面优先 B 端，其余页面优先 C 端，
+ * 各自再回退到另一端。与下方 401 跳转的分流逻辑保持一致，避免 C 端页面
+ * 残留的 B 端 admin token 被误发给只认 C 端身份的接口（如 ASR/TTS）。
  */
 function pickToken(side?: Side): string | null {
   if (side) return getToken(side);
-  return getToken("b") || getToken("c");
+  const onAdmin =
+    typeof window !== "undefined" &&
+    window.location.pathname.startsWith("/admin");
+  return onAdmin
+    ? getToken("b") || getToken("c")
+    : getToken("c") || getToken("b");
 }
 
 export interface ApiFetchOptions extends RequestInit {
