@@ -1,0 +1,2 @@
+# Only needed for the browser acceptance suite; not a production dependency.
+playwright==1.60.0

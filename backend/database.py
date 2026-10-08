@@ -9,13 +9,16 @@ from typing import Optional
 from contextlib import contextmanager
 
 BASE_DIR = Path(__file__).parent
-DB_PATH = BASE_DIR / "intelligent_ark.db"
+# Production can mount the SQLite file outside the code directory.  Keeping a
+# configurable path also makes mobile/desktop integration tests isolated.
+DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "intelligent_ark.db")))
 
 
 # ─── 连接管理 ─────────────────────────────────────────────────────────────────
 
 @contextmanager
 def get_conn():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10.0)
     conn.row_factory = sqlite3.Row
     # WAL：读写不互斥，降低"database is locked"概率
@@ -39,7 +42,8 @@ def init_db():
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             account     TEXT    NOT NULL UNIQUE,
             password_hash TEXT  NOT NULL,
-            role        TEXT    NOT NULL DEFAULT 'student',  -- student | social | admin
+            role        TEXT    NOT NULL DEFAULT 'student',  -- student | admin
+            is_demo     INTEGER NOT NULL DEFAULT 0,
             created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS user_profiles (
@@ -83,6 +87,15 @@ def init_db():
             conn.execute("ALTER TABLE user_profiles ADD COLUMN school_name TEXT")
         except sqlite3.OperationalError:
             pass  # 字段已存在
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
+        # 兼容旧数据库：001 / G001 是项目约定的演示账号，只标记来源，不删除数据。
+        conn.execute(
+            "UPDATE users SET is_demo = 1 WHERE (account = '001' AND role = 'student') "
+            "OR (account = 'G001' AND role = 'admin')"
+        )
         # 迁移：风险事件处理闭环字段（处理时间/处理人/动作/备注）
         for col in (
             "ALTER TABLE risk_events ADD COLUMN handled_at TEXT",
@@ -119,11 +132,12 @@ def _get_or_create_idempotent(
         cur = conn.execute("SELECT id FROM users WHERE account = ?", (account,))
         row = cur.fetchone()
         if row:
+            conn.execute("UPDATE users SET is_demo = 1 WHERE id = ?", (row["id"],))
             return row["id"]
 
         pw_hash = hash_password(plain_password)
         cur = conn.execute(
-            "INSERT INTO users (account, password_hash, role) VALUES (?, ?, ?)",
+            "INSERT INTO users (account, password_hash, role, is_demo) VALUES (?, ?, ?, 1)",
             (account, pw_hash, role),
         )
         user_id = cur.lastrowid
@@ -203,11 +217,21 @@ def verify_user(account: str, plain_password: str) -> Optional[dict]:
         }
 
 
-def count_users_by_role(role: str) -> int:
-    """统计指定角色的注册用户数（social=独居老人，student=学生）。"""
+def get_user_by_id(user_id: int) -> Optional[dict]:
+    """Return the current identity/scope for token validation."""
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM users WHERE role = ?",
+            """SELECT u.id,u.account,u.role,p.school,p.student_id,p.education,
+                      p.admin_type,p.school_name
+               FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
+              WHERE u.id=?""", (user_id,)
+        ).fetchone()
+    return dict(row) if row else None
+def count_users_by_role(role: str) -> int:
+    """统计通过注册流程创建的账号数，演示账号不进入工作台统计。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE role = ? AND COALESCE(is_demo, 0) = 0",
             (role,),
         ).fetchone()
         return int(row["n"]) if row else 0
@@ -216,7 +240,7 @@ def count_users_by_role(role: str) -> int:
 def list_users_with_stats(role: str, scenario: str) -> list[dict]:
     """
     账号管理列表：指定角色的注册用户 + 资料 + 请求/风险统计。
-    - 高校(student) 带 school/student_id 双标识；社区(social) 带 email。
+    - 高校(student) 带 school/student_id 双标识。
     - request_count：该 scenario 下用户提问条数；last_active：最近一次提问时间。
     - red_count/yellow_count：该 scenario 下历史红/黄码次数。
     """
@@ -225,7 +249,7 @@ def list_users_with_stats(role: str, scenario: str) -> list[dict]:
             "SELECT u.id, u.account, u.role, u.created_at, "
             "p.school, p.student_id, p.qq_email "
             "FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id "
-            "WHERE u.role = ? ORDER BY u.created_at DESC",
+            "WHERE u.role = ? AND COALESCE(u.is_demo, 0) = 0 ORDER BY u.created_at DESC",
             (role,),
         ).fetchall()
 
@@ -272,12 +296,15 @@ def get_risk_trend(scenario: str, days: int = 7) -> list[dict]:
     """
     from datetime import datetime, timedelta
 
+    today = datetime.now().date()
+    first_day = today - timedelta(days=days - 1)
+    next_day = today + timedelta(days=1)
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT date(created_at) AS d, level, COUNT(*) AS n, SUM(score) AS s "
-            "FROM risk_events WHERE scenario = ? AND created_at >= datetime('now','localtime', ?) "
+            "FROM risk_events WHERE scenario = ? AND created_at >= ? AND created_at < ? "
             "GROUP BY date(created_at), level",
-            (scenario, f"-{days - 1} days"),
+            (scenario, f"{first_day.isoformat()} 00:00:00", f"{next_day.isoformat()} 00:00:00"),
         ).fetchall()
 
     by_date: dict[str, dict] = {}
@@ -287,7 +314,6 @@ def get_risk_trend(scenario: str, days: int = 7) -> list[dict]:
         e["score_sum"] += r["s"] or 0
         e["count"] += r["n"]
 
-    today = datetime.now().date()
     result = []
     for i in range(days - 1, -1, -1):
         day = today - timedelta(days=i)
@@ -367,13 +393,13 @@ def get_recent_chat_history(
     """
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT role, content FROM chat_messages "
+            "SELECT id, role, content FROM chat_messages "
             "WHERE user_id = ? AND scenario = ? "
             "ORDER BY id DESC LIMIT ?",
             (user_id, scenario, limit),
         ).fetchall()
     # DESC 取最新 N 条后反转为正序
-    return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+    return [{"id": r["id"], "role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
 def clear_chat_history(user_id: int, scenario: Optional[str] = None) -> int:
@@ -475,13 +501,22 @@ def mark_risk_event_handled(
     action: Optional[str] = None,
     note: Optional[str] = None,
 ) -> bool:
+    """Confirm an existing campus event without overwriting its first handling."""
     with get_conn() as conn:
         cur = conn.execute(
             "UPDATE risk_events SET handled = 1, handled_at = datetime('now','localtime'), "
-            "handled_by = ?, action = ?, note = ? WHERE id = ?",
+            "handled_by = ?, action = ?, note = ? "
+            "WHERE id = ? AND scenario = 'university' AND handled = 0",
             (handled_by, action, note, event_id),
         )
-        return cur.rowcount > 0
+        if cur.rowcount > 0:
+            return True
+        # A retry, including a second worker's concurrent request, succeeds
+        # idempotently. The guarded UPDATE preserves the original audit fields.
+        return conn.execute(
+            "SELECT 1 FROM risk_events WHERE id = ? AND scenario = 'university' AND handled = 1",
+            (event_id,),
+        ).fetchone() is not None
 
 
 def list_user_interventions(user_id: int, scenario: str, limit: int = 50) -> list[dict]:
@@ -540,23 +575,10 @@ def seed_demo_users():
         role="student",
         profile={"school": "保定学院", "student_id": "001", "education": "本科生"},
     )
-    _get_or_create_idempotent(
-        account="002@qq.com",
-        plain_password="123456",
-        role="social",
-        profile={"qq_email": "002@qq.com"},
-    )
     # 高校管理员
     _get_or_create_idempotent(
         account="G001",
         plain_password="123456",
         role="admin",
         profile={"admin_type": "G", "school_name": "保定学院"},
-    )
-    # 社区管理员
-    _get_or_create_idempotent(
-        account="C001",
-        plain_password="123456",
-        role="admin",
-        profile={"admin_type": "C", "school_name": ""},
     )

@@ -2,22 +2,18 @@
  * 前端 API client。
  *
  * 认证设计：
- * - 登录成功后，后端签发 JWT。前端将其保存到：
- *   · localStorage（key: ark_c_token / ark_b_token）——用于 Authorization 头
- *   · 非 HttpOnly cookie（key: c_token / b_token）——供 Next.js middleware 做路由守卫
- * - 后端同时会下发 HttpOnly cookie（域名 localhost:8001），但跨域下前端 middleware 读不到，
- *   因此仍需在前端显式 set cookie。JWT 与 Cookie 值保持一致。
- * - 登出时清除上述所有位置。
+ * - 同源部署默认依赖后端下发的 HttpOnly Cookie，避免旧 localStorage token
+ *   覆盖有效会话。
+ * - 只有显式配置 NEXT_PUBLIC_API_BASE、前后端跨域时，才使用 localStorage
+ *   中的 JWT 作为 Authorization Bearer token。
+ * - 非 HttpOnly cookie 仍用于 Next.js middleware 路由守卫。
+ * - 登出清除本地凭证，并由网站中间件清除本端 HttpOnly Cookie。
  */
 import Cookies from "js-cookie";
 
-// 优先用 NEXT_PUBLIC_API_BASE 环境变量（内网穿透场景必须配置）；
-// 否则走同 hostname + 8001 端口（本机/局域网开发）
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ||
-  (typeof window !== "undefined"
-    ? `http://${window.location.hostname}:8001`
-    : "http://localhost:8001");
+// NEXT_PUBLIC_API_BASE 仅在前后端不同源时才需要显式配置；默认留空 → 前端请求同源 /api，
+// 由 next.config.js 的 rewrites 转发到 API_UPSTREAM（默认 http://127.0.0.1:8001）。
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
 export type Side = "c" | "b";
 
@@ -33,33 +29,39 @@ const COOKIE_KEY: Record<Side, string> = {
 
 export function saveToken(side: Side, token: string) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(TOKEN_LS_KEY[side], token);
+  Cookies.remove(`ark_${side}_signed_out`, { path: "/" });
+  try { localStorage.setItem(TOKEN_LS_KEY[side], token); } catch { /* Cookie auth remains available. */ }
   Cookies.set(COOKIE_KEY[side], token, {
     expires: 7,
     path: "/",
     sameSite: "lax",
+    secure: window.location.protocol === "https:",
   });
 }
 
 export function getToken(side: Side): string | null {
   if (typeof window === "undefined") return null;
-  return (
-    localStorage.getItem(TOKEN_LS_KEY[side]) ||
-    Cookies.get(COOKIE_KEY[side]) ||
-    null
-  );
+  if (Cookies.get(`ark_${side}_signed_out`)) return null;
+  try {
+    const token = localStorage.getItem(TOKEN_LS_KEY[side]);
+    if (token) return token;
+  } catch { /* Storage may be blocked by browser policy. */ }
+  return Cookies.get(COOKIE_KEY[side]) || null;
 }
 
 export function clearToken(side: Side) {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(TOKEN_LS_KEY[side]);
+  // Browser JS cannot expire HttpOnly cookies. Middleware consumes this
+  // revocation-only marker on the next page navigation, even if API is down.
+  Cookies.set(`ark_${side}_signed_out`, "1", { path: "/", sameSite: "lax", secure: window.location.protocol === "https:" });
+  try { localStorage.removeItem(TOKEN_LS_KEY[side]); } catch { /* Do not block logout. */ }
   Cookies.remove(COOKIE_KEY[side], { path: "/" });
 }
 
 /**
  * 自动挑选最合适的 token：优先使用 side 指定的。
  * 未指定时按当前路由推断：/admin* 页面优先 B 端，其余页面优先 C 端，
- * 各自再回退到另一端。与下方 401 跳转的分流逻辑保持一致，避免 C 端页面
+ * 不回退到另一端。与下方 401 跳转的分流逻辑保持一致，避免 C 端页面
  * 残留的 B 端 admin token 被误发给只认 C 端身份的接口（如 ASR/TTS）。
  */
 function pickToken(side?: Side): string | null {
@@ -68,11 +70,14 @@ function pickToken(side?: Side): string | null {
     typeof window !== "undefined" &&
     window.location.pathname.startsWith("/admin");
   return onAdmin
-    ? getToken("b") || getToken("c")
-    : getToken("c") || getToken("b");
+    ? getToken("b")
+    : getToken("c");
 }
 
-export interface ApiFetchOptions extends RequestInit {
+export interface ApiFetchOptions extends Omit<RequestInit, "body"> {
+  /** JSON 请求整体时限，包含响应正文读取；默认 15 秒。 */
+  timeoutMs?: number;
+  body?: BodyInit | Record<string, unknown> | null;
   /** 指定使用哪一端的 token；不填则自动挑选 */
   side?: Side;
   /** 401 时是否自动跳转到登录页（默认 true） */
@@ -86,13 +91,15 @@ export interface ApiFetchOptions extends RequestInit {
  * - 自动 credentials: include 以兼容后端 HttpOnly cookie
  * - 401 时清除本端 token 并跳登录页（可关闭）
  */
-export async function apiFetch(
+async function request(
   path: string,
   options: ApiFetchOptions = {}
 ): Promise<Response> {
   const { side, autoRedirectOn401 = true, headers, body, ...rest } = options;
 
-  const token = pickToken(side);
+  // 同源 /api 请求优先使用 HttpOnly Cookie。跨域直连后端时浏览器 Cookie
+  // 可能不可用，才回退到 localStorage Bearer token。
+  const token = API_BASE ? pickToken(side) : null;
   const finalHeaders = new Headers(headers);
 
   if (token && !finalHeaders.has("Authorization")) {
@@ -125,22 +132,42 @@ export async function apiFetch(
   });
 
   if (res.status === 401 && autoRedirectOn401 && typeof window !== "undefined") {
-    // 判断跳 C 端还是 B 端登录页
     const onAdmin = window.location.pathname.startsWith("/admin");
-    if (onAdmin) {
-      clearToken("b");
-      if (window.location.pathname !== "/admin-login") {
-        window.location.replace("/admin-login");
-      }
-    } else {
-      clearToken("c");
-      if (window.location.pathname !== "/login") {
-        window.location.replace("/login");
-      }
+    const sessionSide: Side = side || (onAdmin ? "b" : "c");
+    clearToken(sessionSide);
+    // The website clears its own HttpOnly cookie during navigation; recovery
+    // must not depend on another request to the unavailable backend.
+    const loginPath = sessionSide === "b" ? "/admin-login" : "/login";
+    if (window.location.pathname !== loginPath) {
+      window.location.replace(loginPath);
     }
   }
 
   return res;
+}
+
+async function withDeadline<T>(options: ApiFetchOptions, run: (scoped: ApiFetchOptions) => Promise<T>): Promise<T> {
+  const { timeoutMs = 15000, signal, ...rest } = options;
+  const controller = new AbortController();
+  let timedOut = false;
+  const cancel = () => controller.abort();
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  try {
+    return await run({ ...rest, signal: controller.signal });
+  } catch (reason) {
+    if (timedOut) throw new Error("请求超时，请检查网络后重试");
+    throw reason;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+  }
+}
+
+/** 原始响应在收到响应头时完成；JSON 使用下方覆盖正文读取的时限。 */
+export function apiFetch(path: string, options: ApiFetchOptions = {}): Promise<Response> {
+  return withDeadline(options, (scoped) => request(path, scoped));
 }
 
 /** 便捷 JSON 封装：自动解析 JSON 并在非 2xx 时抛错（带 detail 信息）。 */
@@ -148,7 +175,8 @@ export async function apiJson<T = unknown>(
   path: string,
   options: ApiFetchOptions = {}
 ): Promise<T> {
-  const res = await apiFetch(path, options);
+  return withDeadline(options, async (scoped) => {
+  const res = await request(path, scoped);
   const text = await res.text();
   let data: any = null;
   try {
@@ -166,4 +194,17 @@ export async function apiJson<T = unknown>(
     throw new Error(msg);
   }
   return data as T;
+  });
+}
+
+export async function logout(side: Side) {
+  // 服务端 /api/auth/*-logout 不校验身份，调用它只是为了清掉后端下发的 HttpOnly Cookie。
+  // 后端不可达时本地登出仍须完成：否则 token 会一直留在浏览器里，用户再也退不出去。
+  try {
+    await apiFetch(`/api/auth/${side}-logout`, { method: "POST", side, autoRedirectOn401: false, timeoutMs: 3000 });
+  } catch {
+    // 忽略：网络异常不应阻断登出
+  } finally {
+    clearToken(side);
+  }
 }

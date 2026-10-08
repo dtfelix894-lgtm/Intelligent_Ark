@@ -1,7 +1,4 @@
-"""
-ASR 服务：调用智谱 glm-asr 音频转写接口（OpenAI 兼容格式）。
-失败时抛 HTTPException，由路由层兜底。
-"""
+"""智谱 GLM-ASR-2512 音频转写服务。"""
 from __future__ import annotations
 
 import os
@@ -16,10 +13,17 @@ logger = logging.getLogger(__name__)
 
 ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "")
 ZHIPU_BASE_URL = os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-ZHIPU_ASR_MODEL = os.getenv("ZHIPU_ASR_MODEL", "glm-asr")
+ZHIPU_ASR_MODEL = os.getenv("ZHIPU_ASR_MODEL", "glm-asr-2512")
 ASR_TIMEOUT = float(os.getenv("ASR_TIMEOUT", "30"))
-# 限制单次上传大小（防止滥用），默认 10MB
-ASR_MAX_BYTES = int(os.getenv("ASR_MAX_BYTES", str(10 * 1024 * 1024)))
+# 官方限制：WAV/MP3、单文件不超过 25 MB、音频不超过 30 秒。
+ASR_MAX_BYTES = int(os.getenv("ASR_MAX_BYTES", str(25 * 1024 * 1024)))
+ASR_ALLOWED_SUFFIXES = {".wav", ".mp3"}
+
+
+def validate_audio_upload(filename: str) -> None:
+    suffix = os.path.splitext(filename or "")[1].lower()
+    if suffix not in ASR_ALLOWED_SUFFIXES:
+        raise ValueError("仅支持 WAV 或 MP3 音频")
 
 
 async def transcribe_audio(
@@ -38,11 +42,13 @@ async def transcribe_audio(
     if len(file_bytes) > ASR_MAX_BYTES:
         raise RuntimeError(f"音频超过 {ASR_MAX_BYTES // 1024 // 1024}MB 限制")
 
+    validate_audio_upload(filename)
+
     headers = {"Authorization": f"Bearer {ZHIPU_API_KEY}"}
     files = {
         "file": (filename, file_bytes, content_type or "application/octet-stream"),
     }
-    data = {"model": ZHIPU_ASR_MODEL}
+    data = {"model": ZHIPU_ASR_MODEL, "stream": "false"}
 
     url = f"{ZHIPU_BASE_URL}/audio/transcriptions"
     async with httpx.AsyncClient(timeout=ASR_TIMEOUT) as client:

@@ -1,360 +1,80 @@
-# 智伴方舟 — 技术架构与 API 接口规范文档 (Tech_Spec)
-
-> **文档版本:** v3.0（基于已实现版本逆向整理）
-> **最后更新:** 2026-04
-
----
-
-## 1. 技术栈
-
-| 层次 | 技术 | 说明 |
-|------|------|------|
-| **前端** | Next.js 14+ (App Router) + React + TypeScript | SSR + CSR 混合渲染 |
-| **UI库** | TailwindCSS + Shadcn UI | 原子化样式，统一组件系统 |
-| **图表** | Recharts | B端折线图、饼图 |
-| **后端** | Python 3.10+ + FastAPI + Uvicorn | 异步 ASGI 框架 |
-| **数据库** | SQLite (WAL 模式) + bcrypt | 轻量持久化，bcrypt 密码哈希 |
-| **鉴权** | JWT (HS256) + HttpOnly Cookie | C端用 Bearer Token，B端用 Cookie |
-| **AI 对话** | 智谱 GLM-4 / glm-4.7（JSON Object 模式） | 非流式 + SSE 流式双路径 |
-| **AI 语音** | 智谱 glm-asr（OpenAI 兼容格式） | WAV/MP3 音频转写 |
-| **HTTP 客户端** | httpx（异步） | 后端调用智谱 API |
-| **数据验证** | Pydantic v2 | 请求/响应 Schema |
-| **跨端同步** | localStorage + StorageEvent | C端写 → B端监听，零延迟跨 Tab |
-
----
-
-## 2. 项目目录结构
-
-```
-Intelligent_Ark/
-├── backend/
-│   ├── main.py             # FastAPI 路由总入口（所有 API 端点）
-│   ├── llm_service.py      # 智谱 GLM 调用、场景 Prompt、流式生成、兜底逻辑
-│   ├── asr_service.py      # 智谱 glm-asr 语音转写服务
-│   ├── auth.py             # JWT 签发/验证、角色依赖（require_admin/require_user）
-│   ├── database.py         # SQLite 建表/CRUD（users/chat_messages/risk_events）
-│   ├── schemas.py          # Pydantic Schema（ChatRequest/ChatResponse/RiskAssessment）
-│   ├── requirements.txt    # 依赖（fastapi,uvicorn,zhipuai,pydantic,bcrypt,pyjwt,httpx,pytz）
-│   ├── .env                # 环境变量（见下方环境变量说明）
-│   └── intelligent_ark.db  # SQLite 数据库文件（运行时自动创建）
-│
-└── frontend/
-    └── src/
-        ├── app/
-        │   ├── page.tsx            # 首页/落地页
-        │   ├── login/              # C端登录/注册页
-        │   │   ├── page.tsx
-        │   │   └── components/
-        │   │       ├── LoginForm.tsx
-        │   │       └── RegisterForm.tsx
-        │   ├── admin-login/        # B端管理员登录/注册页
-        │   │   ├── page.tsx
-        │   │   └── components/
-        │   │       ├── AdminLoginForm.tsx
-        │   │       ├── AdminRegisterForm.tsx
-        │   │       └── SliderCaptcha.tsx  # 滑块验证码
-        │   ├── chat/               # C端聊天主页
-        │   │   ├── page.tsx        # 主逻辑（2400+ 行）
-        │   │   └── components/
-        │   │       ├── LeftPanel.tsx       # 场景侧边栏（天气/倒计时/提示）
-        │   │       ├── RightPanel.tsx      # 右侧资源面板
-        │   │       ├── CampusWidgets.tsx   # 高校专属挂件
-        │   │       └── CommunityWidgets.tsx # 社区专属挂件
-        │   ├── admin/              # B端管理大屏
-        │   │   ├── page.tsx
-        │   │   └── layout.tsx
-        │   └── actions/            # Next.js Server Actions（如退出登录）
-        ├── components/ui/          # Shadcn UI 组件库
-        ├── lib/
-        │   ├── api.ts              # apiFetch 封装（自动带 Token）
-        │   ├── scenario-context.tsx # 全局场景状态（university/community）
-        │   └── use-toast.ts
-        └── types/                  # TypeScript 类型定义（ChatMessage/AlertCard 等）
-```
-
----
-
-## 3. 环境变量（backend/.env）
-
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| `ZHIPU_API_KEY` | — | 智谱 API Key（必填，否则走关键词兜底） |
-| `ZHIPU_MODEL` | `glm-4-flash` | 对话模型 ID（实际运行可配置为 glm-4.7） |
-| `ZHIPU_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | 智谱 API Base URL |
-| `ZHIPU_TIMEOUT` | `60` | 单次请求超时秒数 |
-| `ZHIPU_TEMPERATURE` | `0.7` | 模型生成温度 |
-| `ZHIPU_ASR_MODEL` | `glm-asr` | 语音转写模型 |
-| `APP_ENV` | `dev` | 环境标识（`dev`/`prod`），prod 时禁用 dev_override |
-| `JWT_SECRET` | `dev-insecure-secret-...` | JWT 签名密钥（prod 必须配置 ≥32位强密钥） |
-| `JWT_EXPIRE_HOURS` | `168` | Token 有效期（小时），默认 7 天 |
-| `EXAM_DATE` | `2026-12-20` | 考研倒计时目标日期 |
-| `WEATHER_CITY` | `Baoding` | 天气查询城市（映射至经纬度） |
-| `WEATHER_CITY_COORDS` | — | 扩展城市坐标（格式：`City:lat,lon;...`） |
-| `COMMUNITY_HOTLINE` | `12345` | 社区服务热线 |
-| `ALLOWED_ORIGINS` | — | 精确允许的 CORS 来源（逗号分隔） |
-| `ALLOW_ANY_ORIGIN` | — | `1` 时放开所有来源（不带 credentials） |
-| `ADMIN_INVITE_CODE` | — | 管理员注册邀请码（未配置则注册入口关闭） |
-| `SEED_DEMO_USERS` | — | `1` 时强制在 prod 环境也初始化演示账号 |
-| `CHAT_HISTORY_WINDOW` | `10` | 每次对话携带的历史消息条数上限 |
-| `LOG_LEVEL` | `INFO` | 日志级别 |
-
----
-
-## 4. 数据库 Schema
-
-### users
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | INTEGER PK | 自增主键 |
-| `account` | TEXT UNIQUE | 学号/邮箱/工号 |
-| `password_hash` | TEXT | bcrypt 哈希 |
-| `role` | TEXT | `student` / `social` / `admin` |
-| `created_at` | TEXT | 创建时间 |
-
-### user_profiles
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `user_id` | INTEGER FK | 关联 users.id |
-| `school` | TEXT | 学校名称（学生） |
-| `student_id` | TEXT | 学号 |
-| `education` | TEXT | 学历 |
-| `qq_email` | TEXT | QQ 邮箱（社区用户） |
-| `admin_type` | TEXT | `G`（高校）/ `C`（社区），仅 admin |
-| `school_name` | TEXT | 学校名称（高校管理员） |
-
-### chat_messages
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | INTEGER PK | 自增 |
-| `user_id` | INTEGER FK | 关联 users.id |
-| `scenario` | TEXT | `university` / `community` |
-| `role` | TEXT | `user` / `assistant` |
-| `content` | TEXT | 消息内容 |
-| `created_at` | TEXT | 时间戳 |
-
-### risk_events
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | INTEGER PK | 自增 |
-| `user_id` | INTEGER FK | 关联 users.id |
-| `scenario` | TEXT | `university` / `community` |
-| `level` | TEXT | `yellow` / `red`（green 不落库） |
-| `score` | INTEGER | 风险评分 0-100 |
-| `tags` | TEXT | JSON Array 序列化 |
-| `summary` | TEXT | AI 生成的脱敏摘要 |
-| `handled` | INTEGER | 0=未处理，1=已处理 |
-| `created_at` | TEXT | 时间戳 |
-
----
-
-## 5. 完整 API 端点
-
-### 5.1 认证接口
-
-| 方法 | 路径 | 鉴权 | 说明 |
-|------|------|------|------|
-| POST | `/api/auth/c-login` | 无 | C端登录，返回 JWT Token + Cookie |
-| POST | `/api/auth/c-register` | 无 | C端注册（student/social） |
-| POST | `/api/auth/c-logout` | 无 | 清除 c_token Cookie |
-| GET | `/api/auth/me` | Bearer | 获取当前登录用户信息 |
-| POST | `/api/auth/b-login` | 无 | B端管理员登录，返回 admin_type/role/school_name |
-| POST | `/api/auth/b-register` | 无 | B端注册（需邀请码，工号格式 G/C + 3位数字） |
-| POST | `/api/auth/b-logout` | 无 | 清除 b_token Cookie |
-
-**C端登录 Request：**
-```json
-{ "account": "001", "password": "123456" }
-```
-
-**C端登录 Response：**
-```json
-{ "success": true, "role": "student", "user_id": 1, "token": "<jwt>", "message": "登录成功" }
-```
-
-**B端登录 Response：**
-```json
-{
-  "success": true, "token": "<jwt>", "user_id": 2,
-  "admin_type": "G", "role": "university",
-  "school_name": "保定学院", "message": "登录成功"
-}
-```
-
----
-
-### 5.2 对话接口
-
-**ChatRequest Schema（前后端共用）：**
-```typescript
-interface ChatRequest {
-  user_id: string;                                    // 实际由 token 覆盖，前端可传任意值
-  message: string;                                    // 用户输入文本
-  scenario: "university" | "community";               // 场景
-  dev_override?: "normal" | "yellow_alert" | "red_alert"; // 路演专用，prod 环境禁用
-}
-```
-
-**ChatResponse Schema：**
-```json
-{
-  "reply": "AI 的温暖回复，100字内",
-  "risk_assessment": {
-    "level": "green | yellow | red",
-    "score": 42,
-    "tags": ["关键词1", "关键词2"],
-    "summary_for_admin": "【AI脱敏摘要】..."
-  }
-}
-```
-
-| 方法 | 路径 | 鉴权 | 说明 |
-|------|------|------|------|
-| POST | `/api/chat/stream` | Bearer (C端用户) | 非流式对话，一次性返回完整 JSON |
-| POST | `/api/chat/stream-sse` | Bearer (C端用户) | SSE 流式对话，逐 token 推送 |
-| GET | `/api/chat/history` | Bearer | 查询对话历史，参数：`scenario`/`limit` |
-| DELETE | `/api/chat/history` | Bearer | 清空对话历史，参数：`scenario`（可选） |
-
-**SSE 事件格式：**
-```
-data: {"type":"delta","content":"抱"}
-data: {"type":"delta","content":"抱你"}
-data: {"type":"done","reply":"完整回复","risk_assessment":{...}}
-```
-
----
-
-### 5.3 语音识别接口
-
-| 方法 | 路径 | 鉴权 | 说明 |
-|------|------|------|------|
-| POST | `/api/asr/transcribe` | Bearer | 音频文件（WAV）上传转写，返回 `{"text":"..."}` |
-
-- Content-Type：`multipart/form-data`，字段名 `file`
-- 支持格式：WAV（前端以 Web Audio API 采集 PCM 后封包）
-- 大小限制：默认 10MB（`ASR_MAX_BYTES` 控制）
-- 底层调用：智谱 `glm-asr`，OpenAI 兼容接口 `/audio/transcriptions`
-
----
-
-### 5.4 管理端接口
-
-| 方法 | 路径 | 鉴权 | 说明 |
-|------|------|------|------|
-| GET | `/api/admin/alerts` | Bearer (admin) | 查询风险事件列表，参数：`level`/`scenario`/`limit` |
-| POST | `/api/admin/alerts/{id}/handle` | Bearer (admin) | 将指定风险事件标记为已处理 |
-
-**风险事件列表 Response：**
-```json
-{
-  "items": [
-    {
-      "id": 1, "user_id": 3, "account": "001",
-      "scenario": "university", "level": "red", "score": 95,
-      "tags": ["轻生念头", "极度绝望"], "summary": "【AI脱敏摘要】...",
-      "handled": false, "created_at": "2026-04-22T14:30:00"
-    }
-  ],
-  "total": 1
-}
-```
-
----
-
-### 5.5 工具接口
-
-| 方法 | 路径 | 鉴权 | 说明 |
-|------|------|------|------|
-| GET | `/api/weather` | 无 | 获取天气（温度/天气描述/城市），调用 open-meteo.com |
-| GET | `/api/exam-countdown` | 无 | 获取考研倒计时天数 `{"days_remaining": 241}` |
-| GET | `/api/scenario/context` | 无 | 聚合接口，参数 `scenario`，一次返回天气+倒计时/日程+励志语/提示+热线 |
-
-**`/api/scenario/context?scenario=university` Response：**
-```json
-{
-  "scenario": "university",
-  "weather": {"temperature": 22.5, "weather": "晴朗", "city": "Baoding"},
-  "exam_countdown": 241,
-  "daily_quote": "允许一切发生。此刻的你，已经足够优秀了。",
-  "hotlines": [
-    {"label": "24h 心理援助热线", "phone": "400-161-9995"},
-    {"label": "北京心理危机干预", "phone": "010-82951332"}
-  ]
-}
-```
-
----
-
-## 6. LLM 服务架构
-
-### 6.1 双路径（非流式 vs 流式）
-
-| 路径 | 接口 | 模型参数 | 风险评估时机 |
-|------|------|----------|-------------|
-| 非流式 | `/api/chat/stream` | `response_format={"type":"json_object"}` | LLM 直接返回 JSON，含 risk_assessment |
-| 流式 SSE | `/api/chat/stream-sse` | 普通 stream 模式（不强制 JSON） | 流结束后，基于用户消息关键词兜底计算 |
-
-### 6.2 System Prompt 结构
-
-```
-[基础 Prompt]
-- 角色定义：温暖心理陪伴助手
-- 输出格式要求：JSON Object（reply + risk_assessment）
-- 风险等级说明（green/yellow/red + 分数阈值）
-
-[场景差异化 Prompt（二选一追加）]
-- university：知心学姐人设，关注学业就业人际，紧急联系 400-161-9995
-- community：社区小暖人设，关注健康服药跌倒，句子短，用"您/爷爷/奶奶"
-```
-
-### 6.3 分数校正机制（_force_threshold_lock）
-
-防止 LLM 文字评级与数值评分不一致：
-- score ≤ 30 → 强制 level=green
-- score 31-70 → 强制 level=yellow
-- score ≥ 71 → 强制 level=red
-
-### 6.4 兜底策略（_build_fallback）
-
-无 API Key 或 LLM 异常时，按关键词匹配返回预设剧本（场景感知）：
-- 命中红码词（不想活/轻生/自杀/绝望…） → RED_ALERT_SCENE
-- 命中黄码词（失眠/睡不着/焦虑/压力大…，社区版另有跌倒/头晕等） → YELLOW_ALERT_SCENE
-- 无命中 → 当前时间段问候语（绿码）
-
-### 6.5 In-flight 请求去重
-
-5秒内相同 (user_id + scenario + message) 的并发请求共享同一个 asyncio.Task，防止双击重复消耗 Token。
-
----
-
-## 7. CORS 策略
-
-三级优先级，无需硬编码 IP：
-
-1. `ALLOWED_ORIGINS` 环境变量（逗号分隔精确匹配）
-2. `ALLOW_ANY_ORIGIN=1` → 放开 `*`（此时 credentials 被强制关闭）
-3. 默认：正则匹配 `^https?://([a-zA-Z0-9\-._]+|\[[0-9a-fA-F:]+\])(:\d+)?$`，兼容所有 host/IP
-
----
-
-## 8. 启动方式
-
-### 后端
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8001 --host 0.0.0.0
-```
-
-### 前端
-```bash
-cd frontend
-npm install
-npm run dev        # 开发：http://localhost:3000
-npm run build && npm start  # 生产
-```
-
-> **注意：** 实际运行端口为 **8001**（非文档旧版本的 8000）。
+# 智伴方舟高校版技术规范
+
+本文件为当前实现概览，不替代 OpenAPI 字段定义；完整请求/响应约束查看后端 `/docs` 或 `/openapi.json`。验收状态见 [Delivery_Playbook](Delivery_Playbook.md)。
+
+## 目录结构
+
+`backend/main.py` 为 FastAPI 入口；`auth.py`、`database.py`、`schemas.py`、`llm_service.py`、`asr_service.py`、`tts_service.py` 按职责拆分。`frontend/src/app/chat` 为学生端，`frontend/src/app/admin` 为工作端，`frontend/src/lib/api.ts` 统一处理 JWT 请求。
+
+## 核心接口
+
+**运维**
+
+- `GET /`、`GET /health`
+
+**认证**
+
+- `POST /api/auth/c-login`、`POST /api/auth/c-register`、`POST /api/auth/c-logout`
+- `POST /api/auth/b-login`、`POST /api/auth/b-register`、`POST /api/auth/b-logout`
+- `GET /api/auth/c-me`、`GET /api/auth/b-me` 为当前双端身份接口；`GET /api/auth/me` 仅作兼容
+
+登录成功后写入 HttpOnly Cookie（`c_token` / `b_token`），同时返回 token 供前端存储；`prod` 环境下 Cookie 带 `secure` 标记。
+
+同源请求使用 Cookie；显式配置 `NEXT_PUBLIC_API_BASE` 才使用对应端本地 token，不回退到另一端。middleware 仅做页面入口与退出 Cookie 清理，API 权限由后端校验。401/退出使用分端退出标记，由 Next 清除 HttpOnly Cookie；退出 API 等待上限 3 秒。JWT 无状态，退出不代表撤销已复制的令牌。
+
+注册密码至少 6 字符，bcrypt 输入不超过 72 个 UTF-8 字节；账号 trim 后非空。已有短密码登录仍兼容。管理员注册要求邀请码和 `G` 加三位数字，当前页面没有注册入口。
+
+**对话与语音**
+
+- `POST /api/chat/stream`、`POST /api/chat/stream-sse`
+- `GET /api/chat/history`（`limit` 1-200，默认 50）、`DELETE /api/chat/history`
+- `POST /api/asr/transcribe`、`POST /api/tts`
+
+当前聊天页面调用 `/api/chat/stream`，返回 `{reply, risk_assessment}`，不是流式响应。请求可带 `companion_persona`、`campus_context`；身份以 JWT 为准，不信任客户端 `user_id`。SSE 接口完整生成后按 12 字符切片发 delta/done，当前页面不消费它。历史清除、TTS 也不能当作现有页面入口。
+
+ASR 输入为 multipart `file`，项目支持 WAV/MP3 后缀，默认大小上限 26214400 字节；返回 `{text}`。聊天输入区采集并封装 WAV，成功回填后需确认发送。空音频 400、大小超限 413、格式不支持 415、未配置/供应商失败 502。服务端并未独立实现完整音频时长校验，供应商规则另行核对。
+
+前端 JSON 请求时限默认 15 秒、聊天 75 秒、ASR 45 秒；包含响应正文读取。历史成功前禁止发送，失败保留输入并提供重试。发送失败会恢复草稿，不自动重发；数据库写入并非完整对话事务，错误后人工重发不能保证服务端恰好一次，必要时先刷新检查历史。
+
+**工作端**
+
+- `GET /api/admin/alerts`（`limit` 1-500，默认 100）、`POST /api/admin/alerts/{event_id}/handle`
+- `GET /api/admin/stats`、`GET /api/admin/users`
+- `GET /api/admin/users/{user_id}/activity`、`GET /api/admin/users/{user_id}/interventions`
+- `GET /api/admin/risk-trend`、`GET /api/admin/risk-tags`
+
+**工具**
+
+- `GET /api/weather`、`GET /api/exam-countdown`、`GET /api/scenario/context`
+
+前两项仅是兼容接口；当前页面只用 context 获取治愈语、来源及求助资源，不含天气/倒计时。每日治愈外部来源失败会降级为本地文案，不承诺每次刷新都得到新句子。
+
+所有聊天和管理查询固定使用 `scenario=university`。服务端拒绝其他场景值，并在 JWT 校验时重新读取数据库角色。
+
+## 风险评估
+
+`llm_service._risk()` 对单条消息做关键词匹配及有限完整片段排除，风险等级不由 LLM 文本决定。红色优先于黄色；分值取决于命中标签类别数（不是词出现次数）：
+
+| 等级 | 规则概述 | 分值 |
+| --- | --- | --- |
+| red | 轻生念头/自伤危险标签 | `min(98, 92 + (标签数 - 1) * 3)`；现有两类为 92 或 95 |
+| yellow | 睡眠、焦虑、低落、学业、孤独标签 | `min(80, 60 + (标签数 - 1) * 5)` |
+| green | 以上均未命中 | 10 |
+
+`dev_override` 为 `yellow_alert` / `red_alert` 时可跳过 LLM 直接返回预设剧本，仅在 `APP_ENV != prod` 时生效。
+
+调试剧本的 yellow/red 分值为 65/95，和普通规则路径不同；prod 拒绝任何非空 `dev_override`（包括 `normal`）。35 条样例及边界见 [Risk_Rule_Acceptance](Risk_Rule_Acceptance.md)，不代表医学验证。真实模型收到分级提示词，但不保证每次回复完全服从；黄色离线回复不虚构症状。
+
+## 数据与安全
+
+SQLite 启用 WAL、外键和参数化查询。密码使用 bcrypt，生产环境必须配置长度至少 32 位的 `JWT_SECRET`。CORS 在 `prod` 下只允许 `ALLOWED_ORIGINS` 精确匹配并禁止 `ALLOW_ANY_ORIGIN`；开发环境在未配置 `ALLOWED_ORIGINS` 时回退为匹配任意 host 的正则。旧数据库扩展字段仅为迁移兼容保留，不再参与新业务流程。
+
+数据为 `users`、`chat_messages`、`risk_events` 等 SQLite 表，普通聊天也留存，只有黄/红生成风险事件。重复跟进不覆盖第一次处理记录。单校权限模型没有按学校隔离多个租户；未完成生产安全审计。
+
+## 配置与验证
+
+`DB_PATH` 未设置时使用后端目录数据库，显式空值不是默认路径。LLM 密钥/地址/模型分别优先读 `LLM_*`，空值回退 `ZHIPU_*`，模型最终默认 `glm-5.3-flash`；显式配置应保证供应商三者匹配。LLM 取历史最多为 API 的 `CHAT_HISTORY_WINDOW`，模型层仍截最近 10 条。ASR 使用 `ZHIPU_*`，TTS 使用 `MIMO_*`。
+
+Next 同源 `/api` rewrite 使用构建/启动前配置的 `API_UPSTREAM`；公网可由 Nginx 直接转发。`skipMiddlewareUrlNormalize` 防止本地 IP 重定向被规范化为 localhost；代理仍需保留外部 Host/协议。日常 dev/build 共用 `.next`，验证入口单独使用 `.next-verify`。
+
+运行 `python scripts/verify_project.py` 生成临时库、服务日志、JSON/Markdown 报告及截图；正常退出停止本次服务并检查端口，不清理产物。外部 LLM 离线兜底、ASR/治愈语替身不计为供应商验收。部署不生成 WAR，详见 [部署说明](../deploy/README.md)。

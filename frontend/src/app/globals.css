@@ -4,24 +4,24 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 20 14.3% 4.1%;
+    --background: 250 45% 98%;
+    --foreground: 222 38% 15%;
     --card: 0 0% 100%;
-    --card-foreground: 20 14.3% 4.1%;
-    --primary: 22 100% 64%;
-    --primary-foreground: 60 9.1% 97.8%;
-    --secondary: 24 9.8% 10%;
-    --secondary-foreground: 60 9.1% 97.8%;
-    --muted: 60 4.8% 95.9%;
-    --muted-foreground: 25 5.3% 44.7%;
-    --accent: 60 4.8% 95.9%;
-    --accent-foreground: 20 14.3% 4.1%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 60 9.1% 97.8%;
-    --border: 20 5.9% 90%;
-    --input: 20 5.9% 90%;
-    --ring: 22 100% 64%;
-    --radius: 0.5rem;
+    --card-foreground: 222 38% 15%;
+    --primary: 262 72% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 252 88% 96%;
+    --secondary-foreground: 263 69% 35%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 25% 34%;
+    --accent: 152 81% 92%;
+    --accent-foreground: 161 94% 24%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 255 36% 91%;
+    --input: 255 30% 87%;
+    --ring: 262 72% 50%;
+    --radius: 1rem;
   }
 
   .dark {
@@ -29,9 +29,45 @@
     --foreground: 60 9.1% 97.8%;
   }
 
+  * { @apply border-border; }
+
+  html { min-width: 320px; scroll-behavior: smooth; }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    min-height: 100vh;
+    overflow-x: hidden;
+    font-family: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.6;
   }
+
+  :focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+  ::selection { background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground)); }
+}
+
+@layer components {
+  .ark-surface { @apply border border-border/90 bg-white/95 shadow-[0_18px_48px_rgba(76,29,149,0.08)]; }
+  .ark-soft-card { @apply rounded-2xl border border-border/80 bg-white shadow-[0_10px_30px_rgba(76,29,149,0.06)]; }
+  .ark-icon-tile { @apply grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-secondary text-primary; }
+  .ark-interactive { @apply cursor-pointer transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2; }
+  .ark-skip-link { @apply fixed left-4 top-4 z-[200] -translate-y-24 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-transform focus:translate-y-0; }
+  .ark-scrollbar { scrollbar-color: rgba(109,40,217,.28) transparent; scrollbar-width: thin; }
+  .ark-grid-bg {
+    background-image: radial-gradient(circle at 15% 10%, rgba(139,92,246,.13), transparent 28%), radial-gradient(circle at 88% 18%, rgba(5,150,105,.1), transparent 24%), linear-gradient(rgba(109,40,217,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(109,40,217,.025) 1px, transparent 1px);
+    background-size: auto, auto, 32px 32px, 32px 32px;
+  }
+}
+
+@keyframes ark-fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ark-pulse-soft { 0%,100% { opacity:.5; } 50% { opacity:1; } }
+@keyframes ark-fly-away { 0% { opacity:1; transform:translate(0,0) scale(1); } 100% { opacity:0; transform:translate(var(--fly-x),var(--fly-y)) scale(.25); } }
+.ark-fade-up { animation: ark-fade-up 320ms ease-out both; }
+.ark-pulse-soft { animation: ark-pulse-soft 1.5s ease-in-out infinite; }
+.ark-fly-away { animation: ark-fly-away 850ms ease-out forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
 .theme-campus {
@@ -50,23 +86,6 @@
 .theme-campus body,
 .theme-campus {
   background: linear-gradient(145deg, #0f172a 0%, #1e293b 50%, #0c4a6e 100%);
-  color: var(--text-primary);
-}
-
-.theme-community {
-  --panel-bg: #fffaf5;
-  --panel-border: rgba(249, 115, 22, 0.2);
-  --card-bg: #ffffff;
-  --accent-orange: #ea580c;
-  --text-primary: #292524;
-  --text-secondary: #57534e;
-  --text-muted: #a8a29e;
-  font-size: 18px;
-}
-
-.theme-community body,
-.theme-community {
-  background: #fff7ed;
   color: var(--text-primary);
 }
 
@@ -136,20 +155,6 @@
 }
 .theme-campus ::-webkit-scrollbar-thumb:hover {
   background: rgba(100, 116, 139, 0.6);
-}
-
-.theme-community ::-webkit-scrollbar {
-  width: 6px;
-}
-.theme-community ::-webkit-scrollbar-track {
-  background: transparent;
-}
-.theme-community ::-webkit-scrollbar-thumb {
-  background: rgba(249, 115, 22, 0.3);
-  border-radius: 4px;
-}
-.theme-community ::-webkit-scrollbar-thumb:hover {
-  background: rgba(249, 115, 22, 0.5);
 }
 
 .phone-chat ::-webkit-scrollbar {

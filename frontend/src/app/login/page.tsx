@@ -1,143 +1,76 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Heart, LogIn, GraduationCap, User } from "lucide-react";
+import Link from "next/link";
+import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import RegisterForm from "./components/RegisterForm";
-import LoginForm, { type LoginFormHandle } from "./components/LoginForm";
-
-type View = "login" | "register";
-
-const DEMO_ACCOUNTS = {
-  student: { account: "001", password: "123456", label: "学生账号" },
-  social: { account: "002@qq.com", password: "123456", label: "社会账号" },
-};
+import { ArrowLeft, GraduationCap, HeartHandshake, Loader2, LockKeyhole, ShieldCheck } from "lucide-react";
+import { apiJson, saveToken } from "@/lib/api";
 
 export default function LoginPage() {
-  const [view, setView] = useState<View>("register");
-  const loginFormRef = useRef<LoginFormHandle>(null);
   const router = useRouter();
+  const [registering, setRegistering] = useState(false);
+  const [account, setAccount] = useState("");
+  const [password, setPassword] = useState("");
+  const [school, setSchool] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const handleDemoLogin = (type: "student" | "social") => {
-    const demo = DEMO_ACCOUNTS[type];
-    setView("login");
-    setTimeout(() => {
-      loginFormRef?.current?.fillDemo(demo.account, demo.password);
-    }, 50);
-  };
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    if (!account.trim() || password.length < 6) {
+      setError("请输入学号和至少 6 位密码。");
+      return;
+    }
+    setBusy(true);
+    try {
+      const data = await apiJson<{ token?: string }>(`/api/auth/${registering ? "c-register" : "c-login"}`, {
+        method: "POST",
+        side: "c",
+        autoRedirectOn401: false,
+        body: registering ? { account: account.trim(), password, role: "student", school: school.trim(), student_id: studentId.trim() } : { account: account.trim(), password },
+      });
+      if (data.token) saveToken("c", data.token);
+      router.push("/chat");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "网络异常，请稍后重试");
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  const handleLoginSuccess = () => {
-    router.push("/chat");
-  };
+  function switchMode() {
+    setRegistering((value) => !value);
+    setError("");
+  }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center relative overflow-hidden bg-gradient-to-br from-indigo-200 via-purple-200 to-pink-200">
-      {/* Animated gradient orbs */}
-      <div className="absolute top-1/4 left-1/4 w-72 h-72 bg-purple-300 rounded-full mix-blend-multiply filter blur-3xl opacity-40 animate-pulse" />
-      <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-pink-300 rounded-full mix-blend-multiply filter blur-3xl opacity-40 animate-pulse" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-300 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse" />
+    <main id="main-content" className="ark-grid-bg grid min-h-screen lg:grid-cols-[1.05fr_.95fr]">
+      <section className="hidden flex-col justify-between bg-gradient-to-br from-violet-950 via-violet-900 to-emerald-900 p-12 text-white lg:flex xl:p-16">
+        <Link href="/" className="flex w-fit items-center gap-3 rounded-xl focus-visible:ring-2 focus-visible:ring-white"><span className="grid h-11 w-11 place-items-center rounded-xl bg-white/10"><GraduationCap className="h-6 w-6" aria-hidden="true" /></span><span><span className="block font-bold">智伴方舟</span><span className="block text-xs text-violet-100">高校心理支持平台</span></span></Link>
+        <div className="max-w-xl"><HeartHandshake className="h-12 w-12 text-emerald-300" aria-hidden="true" /><h1 className="mt-7 text-4xl font-bold leading-tight">在这里，你可以安心说出自己的感受</h1><p className="mt-5 text-lg leading-8 text-violet-100">知心学姐会陪你从最困扰的一件事开始。学业、就业、人际关系或只是今天有点累，都可以慢慢说。</p></div>
+        <p className="flex max-w-lg items-start gap-3 text-sm leading-6 text-violet-100"><ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" aria-hidden="true" />平台提供心理支持和风险识别，不替代专业诊断；紧急情况下请及时联系现实中的专业人员。</p>
+      </section>
 
-      {/* Glass card */}
-      <div className="relative z-10 w-full max-w-md mx-4">
-        <div className="backdrop-blur-xl bg-white/60 border border-white/40 rounded-3xl shadow-2xl overflow-hidden">
-          {/* Header */}
-          <div className="px-8 pt-8 pb-0 text-center">
-            <div className="flex items-center justify-center gap-2 mb-1">
-              <Heart className="w-6 h-6 text-purple-600 fill-purple-600" />
-              <h1 className="text-2xl font-bold text-slate-800">智伴方舟</h1>
-            </div>
-            <p className="text-sm text-slate-500 mb-6">智慧心理陪伴，守护每一份心灵</p>
+      <section className="flex min-h-screen items-center justify-center px-4 py-10 sm:px-8">
+        <div className="w-full max-w-md">
+          <Link href="/" className="mb-7 inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground lg:hidden"><ArrowLeft className="h-4 w-4" aria-hidden="true" />返回首页</Link>
+          <div className="ark-surface rounded-[1.75rem] p-6 sm:p-8">
+            <div className="mb-7"><p className="text-sm font-semibold text-primary">智伴方舟 · 学生端</p><h1 className="mt-2 text-2xl font-bold tracking-tight">{registering ? "创建学生账号" : "欢迎回到陪伴空间"}</h1><p className="mt-2 text-sm leading-6 text-muted-foreground">{registering ? "填写基本信息后即可进入高校陪伴空间。" : "使用学号登录，继续和知心学姐聊聊。"}</p></div>
+            <form onSubmit={submit} noValidate className="space-y-5">
+              <div><label htmlFor="student-account" className="mb-2 block text-sm font-semibold">学号</label><input id="student-account" name="username" autoComplete="username" inputMode="text" value={account} onChange={(e) => setAccount(e.target.value)} className="h-12 w-full rounded-xl border border-input bg-white px-4 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="例如：001" /></div>
+              <div><div className="mb-2 flex items-center justify-between"><label htmlFor="student-password" className="text-sm font-semibold">密码</label><span className="text-xs text-muted-foreground">至少 6 位</span></div><div className="relative"><LockKeyhole className="pointer-events-none absolute left-4 top-3.5 h-5 w-5 text-muted-foreground" aria-hidden="true" /><input id="student-password" name="password" type="password" autoComplete={registering ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} className="h-12 w-full rounded-xl border border-input bg-white pl-12 pr-4 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div></div>
+              {registering && <div className="grid gap-5 sm:grid-cols-2"><div><label htmlFor="school" className="mb-2 block text-sm font-semibold">学校 <span className="font-normal text-muted-foreground">（可选）</span></label><input id="school" autoComplete="organization" value={school} onChange={(e) => setSchool(e.target.value)} className="h-12 w-full rounded-xl border border-input bg-white px-4 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div><div><label htmlFor="student-id" className="mb-2 block text-sm font-semibold">学籍号 <span className="font-normal text-muted-foreground">（可选）</span></label><input id="student-id" value={studentId} onChange={(e) => setStudentId(e.target.value)} className="h-12 w-full rounded-xl border border-input bg-white px-4 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div></div>}
+              {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
+              <button type="submit" disabled={busy} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 font-semibold text-primary-foreground shadow-lg shadow-primary/15 transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60">{busy && <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />}{busy ? "处理中…" : registering ? "注册并进入" : "进入陪伴空间"}</button>
+            </form>
+            <button type="button" onClick={switchMode} className="mt-4 min-h-11 w-full rounded-xl text-sm font-semibold text-primary transition-colors hover:bg-secondary">{registering ? "已有账号，返回登录" : "首次使用？创建学生账号"}</button>
+            <div className="my-6 h-px bg-border" />
+            <Link href="/admin-login" className="flex min-h-11 items-center justify-center rounded-xl text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">高校工作端登录</Link>
           </div>
-
-          {/* Global Tab: Login / Register */}
-          <div className="px-8 mb-2">
-            <div className="flex bg-slate-100/70 rounded-xl p-1">
-              {(["register", "login"] as View[]).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 ${
-                    view === v
-                      ? "bg-white text-purple-700 shadow-sm"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  {v === "login" ? (
-                    <>
-                      <LogIn className="w-4 h-4" />
-                      登录
-                    </>
-                  ) : (
-                    <>
-                      <Shield className="w-4 h-4" />
-                      注册
-                    </>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Form area */}
-          <div className="px-8 pb-4 relative overflow-hidden">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={view}
-                initial={{ opacity: 0, x: view === "login" ? -30 : 30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: view === "login" ? 30 : -30 }}
-                transition={{ duration: 0.25, ease: "easeInOut" }}
-              >
-                {view === "register" ? (
-                  <RegisterForm onSwitchToLogin={() => setView("login")} />
-                ) : (
-                  <LoginForm ref={loginFormRef} onSuccess={handleLoginSuccess} />
-                )}
-              </motion.div>
-            </AnimatePresence>
-          </div>
-
-          {/* Demo quick-fill buttons (only visible in login view) */}
-          <AnimatePresence>
-            {view === "login" && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }}
-                className="px-8 pb-6"
-              >
-                <div className="border-t border-slate-200/60 pt-4 flex gap-3 justify-center">
-                  <button
-                    type="button"
-                    onClick={() => handleDemoLogin("student")}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-purple-200 bg-purple-50 text-purple-600 text-xs hover:bg-purple-100 transition-colors"
-                  >
-                    <GraduationCap className="w-3.5 h-3.5" />
-                    演示：学生账号 001
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDemoLogin("social")}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-600 text-xs hover:bg-blue-100 transition-colors"
-                  >
-                    <User className="w-3.5 h-3.5" />
-                    演示：社会账号 002
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
-
-        <p className="text-center text-xs text-slate-500 mt-4">
-          登录即表示同意{" "}
-          <span className="text-purple-600 cursor-pointer hover:underline">《用户服务协议》</span>{" "}
-          和{" "}
-          <span className="text-purple-600 cursor-pointer hover:underline">《隐私政策》</span>
-        </p>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

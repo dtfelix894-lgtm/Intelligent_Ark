@@ -10,7 +10,7 @@ export interface RiskAssessment {
 export interface ChatRequest {
   user_id: string;
   message: string;
-  scenario: "university" | "community";
+  scenario: "university";
   dev_override?: "normal" | "yellow_alert" | "red_alert";
 }
 
@@ -34,7 +34,7 @@ export interface ChatMessage {
 export interface AlertCard {
   /** 事件流水主键：此次动作的唯一标识（稳定哈希，不依赖时间戳） */
   eventId: number;
-  /** 用户身份主键：高校模式为学号，社区模式为邮箱或手机号 */
+  /** 用户身份主键：高校模式为学号（旧数据兼容） */
   user_id: string;
   level: RiskLevel;
   score: number;
@@ -42,7 +42,7 @@ export interface AlertCard {
   summary_for_admin: string;
   timestamp: string;
   resolved?: boolean;
-  scenario: "university" | "community";
+  scenario: "university";
   /** 兼容旧数据兜底 */
   id?: number;
 }

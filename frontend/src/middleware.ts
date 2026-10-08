@@ -4,52 +4,63 @@ import type { NextRequest } from "next/server";
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  const cToken = request.cookies.get("c_token")?.value;
-  const bToken = request.cookies.get("b_token")?.value;
+  const signedOut = (side: string) => request.cookies.get(`ark_${side}_signed_out`)?.value === "1";
+  const cToken = !signedOut("c") && request.cookies.get("c_token")?.value;
+  const bToken = !signedOut("b") && request.cookies.get("b_token")?.value;
+  const finish = (response: NextResponse) => {
+    for (const side of ["c", "b"]) {
+      if (signedOut(side)) {
+        response.cookies.set(`${side}_token`, "", { path: "/", maxAge: 0, httpOnly: true });
+        response.cookies.set(`ark_${side}_signed_out`, "", { path: "/", maxAge: 0 });
+      }
+    }
+    return response;
+  };
+  // Preserve the browser-facing Host rather than Next's internal localhost.
+  // Next's RSC adapter requires an absolute redirect URL.
+  const redirect = (path: string) => {
+    const url = request.nextUrl.clone();
+    url.host = request.headers.get("host") || url.host;
+    url.pathname = path;
+    url.search = "";
+    return finish(NextResponse.redirect(url));
+  };
 
   // ── C 端：/chat 受保护 ──────────────────────────────────────────────────────
   if (pathname.startsWith("/chat")) {
     if (!cToken) {
-      const loginUrl = request.nextUrl.clone();
-      loginUrl.pathname = "/login";
-      return NextResponse.redirect(loginUrl);
+      return redirect("/login");
     }
-    return NextResponse.next();
+    return finish(NextResponse.next());
   }
 
   // ── B 端：admin-login 本身 ──────────────────────────────────────────────────
   if (pathname === "/admin-login") {
     // 已登录 → 直接去管理后台（不会再被 /admin* 拦截）
     if (bToken) {
-      const adminUrl = request.nextUrl.clone();
-      adminUrl.pathname = "/admin";
-      return NextResponse.redirect(adminUrl);
+      return redirect("/admin");
     }
     // 未登录 → 允许留在登录页
-    return NextResponse.next();
+    return finish(NextResponse.next());
   }
 
   // ── B 端：/admin 及所有子路由 ─────────────────────────────────────────────
   if (pathname.startsWith("/admin")) {
     if (!bToken) {
-      const adminLoginUrl = request.nextUrl.clone();
-      adminLoginUrl.pathname = "/admin-login";
-      return NextResponse.redirect(adminLoginUrl);
+      return redirect("/admin-login");
     }
-    return NextResponse.next();
+    return finish(NextResponse.next());
   }
 
   // ── C 端：已登录用户访问 /login → 重定向到 /chat ─────────────────────────
   if (pathname === "/login") {
     if (cToken) {
-      const chatUrl = request.nextUrl.clone();
-      chatUrl.pathname = "/chat";
-      return NextResponse.redirect(chatUrl);
+      return redirect("/chat");
     }
-    return NextResponse.next();
+    return finish(NextResponse.next());
   }
 
-  return NextResponse.next();
+  return finish(NextResponse.next());
 }
 
 export const config = {

@@ -2,7 +2,8 @@
 JWT 鉴权模块。
 
 - create_access_token：签发 JWT
-- get_current_user：FastAPI 依赖，解析 Bearer token / HttpOnly Cookie，返回 {id, account, role}
+- get_current_user：通用 FastAPI 依赖，解析 Bearer token / HttpOnly Cookie
+- get_current_student / get_current_admin：按业务端读取各自的 HttpOnly Cookie
 - require_admin：要求 role=='admin'
 - require_roles(...)：要求 role 属于给定集合
 - is_dev_env：判断当前是否允许 dev_override
@@ -58,25 +59,59 @@ def _decode(token: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的凭证")
 
 
-def _extract_token(request: Request) -> Optional[str]:
+def _extract_token(request: Request, cookie_name: Optional[str] = None) -> Optional[str]:
     # 优先 Authorization: Bearer
     auth = request.headers.get("Authorization") or request.headers.get("authorization")
     if auth and auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
-    # 回退 HttpOnly Cookie（B 端）
+    # 业务接口必须读取本端 Cookie，避免同一浏览器双端登录时身份串用。
+    if cookie_name:
+        return request.cookies.get(cookie_name)
+    # 通用接口保留兼容行为；具体业务权限不应依赖这个回退顺序。
     return request.cookies.get("b_token") or request.cookies.get("c_token")
 
 
-def get_current_user(request: Request) -> dict:
-    token = _extract_token(request)
+def _resolve_user(token: Optional[str]) -> dict:
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录")
     payload = _decode(token)
-    return {
-        "id": int(payload["sub"]),
+    try:
+        uid = int(payload["sub"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="无效的凭证")
+    user = {
+        "id": uid,
         "account": payload.get("account", ""),
         "role": payload.get("role", ""),
     }
+    # Tokens are stateless, but role/scope is authoritative in the database.
+    # This invalidates accounts outside the campus product scope.
+    try:
+        from database import get_user_by_id
+        current = get_user_by_id(user["id"])
+    except Exception:
+        current = None
+    if not current or current.get("role") != user["role"]:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号已失效")
+    if current.get("role") not in ("student", "admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="当前产品不支持该账号")
+    user.update({k: current.get(k) for k in ("school", "student_id", "education", "admin_type", "school_name")})
+    return user
+
+
+def get_current_user(request: Request) -> dict:
+    """通用身份解析，仅供不区分业务端的接口使用。"""
+    return _resolve_user(_extract_token(request))
+
+
+def get_current_student(request: Request) -> dict:
+    """学生业务接口：Bearer 优先，否则只读取 c_token。"""
+    return _resolve_user(_extract_token(request, "c_token"))
+
+
+def get_current_admin(request: Request) -> dict:
+    """高校工作端接口：Bearer 优先，否则只读取 b_token。"""
+    return _resolve_user(_extract_token(request, "b_token"))
 
 
 def get_optional_user(request: Request) -> Optional[dict]:
@@ -94,14 +129,14 @@ def get_optional_user(request: Request) -> Optional[dict]:
     }
 
 
-def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") != "admin":
+def require_admin(user: dict = Depends(get_current_admin)) -> dict:
+    if user.get("role") != "admin" or user.get("admin_type") != "G":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
     return user
 
 
-def require_user(user: dict = Depends(get_current_user)) -> dict:
-    """C 端用户（student/social）。"""
-    if user.get("role") not in ("student", "social"):
+def require_user(user: dict = Depends(get_current_student)) -> dict:
+    """高校学生用户。"""
+    if user.get("role") != "student":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要 C 端用户身份")
     return user

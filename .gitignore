@@ -5,6 +5,7 @@ node_modules/
 
 # Build
 .next/
+.next-verify/
 out/
 build/
 dist/
@@ -47,9 +48,6 @@ yarn-debug.log*
 *.db-shm
 *.db-wal
 
-# 本地 TLS 证书 / 私钥
-frontend/certificates/
-
 # 项目交付物（PPT/PDF/DOCX 报告与生成脚本，按需手工归档）
 *.pptx
 *.pdf
@@ -57,7 +55,6 @@ frontend/certificates/
 /build_v2.py
 /build_v3.py
 /build_restructured_ppt.py
-/update_cpolar.py
 /package.json
 /package-lock.json
 /重构ppt.md

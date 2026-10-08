@@ -1,95 +1,48 @@
-# CLAUDE.md
+# 智伴方舟开发说明
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## 项目概述
-
-智伴方舟 (Intelligent Ark) — 心理陪伴 AI 服务系统，挑战杯创业竞赛演示版。B2B2C 双轨架构：
-- **高校情绪治理** (`university`)：面向大学生的心理陪伴，AI 人设"知心学姐"
-- **社区康养守护** (`community`)：面向独居老人的健康关怀，AI 人设"社区小暖"
+智伴方舟是高校心理陪伴与风险预警系统，包含学生端和高校工作端。AI 人设为“知心学姐”，产品场景固定为 `university`。
 
 ## 启动
 
 ```bash
-# 后端（端口 8001）
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8001 --host 0.0.0.0
-
-# 前端（端口 3000，自动绑定 0.0.0.0）
-cd frontend
-npm install
-npm run dev
+cd backend && pip install -r requirements.txt && uvicorn main:app --reload --port 8001 --host 0.0.0.0
+cd frontend && npm install && npm run dev
 ```
 
-前端自动连接 `http://<同hostname>:8001`，可通过 `frontend/.env.local` 中 `NEXT_PUBLIC_API_BASE` 覆盖。
+数据库初始为空，不预置任何账号。需要演示数据时在 `backend/.env` 写 `SEED_DEMO_USERS=1` 并重启后端，启动钩子才会注入学生 `001 / 123456` 与高校管理员 `G001 / 123456`；不设该变量时这些账号不存在，登录返回 401。
 
-## 演示账号
+管理员注册接口始终保留，但前端没有注册入口，只能直接调 API：先在 `.env` 配 `ADMIN_INVITE_CODE`（不配则 `POST /api/auth/b-register` 恒返回 403），`worker_id` 需匹配 `^G\d{3}$`。学生端 `/login` 自带登录/注册切换，不受影响。
 
-| 角色 | 账号 | 密码 |
-|------|------|------|
-| 高校学生 (C端) | `001` | `123456` |
-| 社区居民 (C端) | `002@qq.com` | `123456` |
-| 高校管理员 (B端) | `G001` | `123456` |
-| 社区管理员 (B端) | `C001` | `123456` |
+## 技术架构
 
-非 prod 环境启动时自动 seed。
+- 后端：Python 3.12、FastAPI、SQLite WAL、JWT HS256、bcrypt。
+- 前端：Next.js 15 App Router、React 18、TypeScript、Tailwind、Shadcn UI。
+- AI：对话走 OpenAI 兼容的 `LLM_*`；未配置密钥时使用高校心理关键词兜底。ASR 走智谱 `ZHIPU_*`，TTS 走小米 MiMo `MIMO_*`（未配置时 `/api/tts` 恒 502）。
+- 数据表：`users`、`user_profiles`、`chat_messages`、`risk_events`。
 
-## 架构要点
+所有业务路由均由 `backend/main.py` 定义，`auth.py` 负责身份和高校角色守卫，`database.py` 负责持久化。`/api/chat/stream` 返回完整 JSON，`/api/chat/stream-sse` 返回 SSE 增量事件。风险等级 green/yellow/red 由 `llm_service._risk()` 纯关键词判定（固定分值 10/55/90），LLM 只负责回复文本，并在工作端形成跟进闭环。
 
-### 后端 (Python + FastAPI + SQLite)
+`.env` 的加载依赖导入顺序：`load_dotenv()` 只在 `llm_service.py` / `asr_service.py` / `tts_service.py` 内调用，`main.py`、`auth.py`、`database.py` 自身不调用。目前靠 `main.py` 先 import `llm_service` 才让 `ADMIN_INVITE_CODE`、`APP_ENV` 读到 `.env`，调整 `main.py` 顶部 import 顺序可能使这些常量静默回落为默认值。改完 `.env` 需手动重启后端，`--reload` 不监听 `.env`。
 
-所有路由定义在 `backend/main.py`（单文件 monolith），模块职责：
-- `auth.py` — JWT HS256 鉴权，`get_current_user` / `require_admin` / `require_user` 作为 FastAPI 依赖注入
-- `llm_service.py` — 智谱 GLM 调用，场景化 system prompt，关键词兜底，分数校正锁 `_force_threshold_lock`
-- `database.py` — SQLite WAL 模式，bcrypt 密码，4 张表 (users / user_profiles / chat_messages / risk_events)
-- `asr_service.py` — 智谱 glm-asr 语音转写
-- `schemas.py` — Pydantic 模型，`Scenario` / `RiskLevel` / `DevOverride` 类型字面量
+## Agent skills
 
-关键机制：
-- **双路径对话**：`/api/chat/stream`（非流式 JSON）和 `/api/chat/stream-sse`（SSE 流式）。非流式要求 LLM 输出严格 JSON（含 reply + risk_assessment），流式不要求 JSON 输出，事后用关键词兜底计算风险。
-- **LLM 兜底**：无 API Key 或调用异常时，根据场景 + 关键词匹配返回预设剧本，演示不中断。
-- **dev_override**：`APP_ENV != "prod"` 时可跳过 LLM 直接返回预设的 yellow/red 预警剧本。
-- **In-flight 去重**：5 秒窗口内相同 (user_id, scenario, message) 复用同一 Task。
-- **CORS 三级策略**：`ALLOWED_ORIGINS` 精确匹配 → `ALLOW_ANY_ORIGIN=1` 全放 → 默认正则匹配任意 host。
+### Issue tracker
 
-### 前端 (Next.js 14 App Router + Tailwind + Shadcn UI)
+Issues are tracked locally as markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
 
-- `middleware.ts` — 路由守卫：`/chat` 检查 `c_token` cookie，`/admin` 检查 `b_token` cookie
-- `lib/api.ts` — 统一 `apiFetch`：自动附 Bearer token + 401 自动跳转登录。token 双写 localStorage + cookie（cookie 供 middleware 读）
-- `lib/scenario-context.tsx` — `useScenario()` 全局场景状态，持久化到 localStorage
-- `app/chat/page.tsx` — 聊天主页（2500+ 行大组件），含：WAV 录音 + ASR、TTS 朗读、Dev Panel（三击头像）、字号缩放、称呼偏好、能量电台/正念放松/木鱼/打字墙等解压功能
-- `app/admin/page.tsx` — B 端管理大屏，跨 Tab 实时预警（localStorage StorageEvent 同步）
-- `app/chat/components/LeftPanel.tsx` / `RightPanel.tsx` — 侧边栏组件，按场景差异化渲染
+### Triage labels
 
-### 跨 Tab 预警同步
+Default triage labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
 
-C 端对话产生 yellow/red 风险时，写入 `localStorage.latest_ark_alert`；B 端 admin 页面监听 `StorageEvent` 实时弹出预警卡片。无需 WebSocket。
+### Domain docs
 
-## 风险评估
+Single-context: `GLOSSARY.md` at the repo root and `docs/adr/`. See `docs/agents/domain.md`.
 
-| 等级 | 分数 | 含义 |
-|------|------|------|
-| green | 0-30 | 情绪平稳 |
-| yellow | 31-70 | 轻度困扰 |
-| red | 71-100 | 严重危机 |
+## 开发验证
 
-`_force_threshold_lock` 会强制按分数区间修正 level，防止 LLM 误判。
-
-## 环境变量
-
-后端 `backend/.env` 关键项（完整列表见 README.md）：
-
-```env
-ZHIPU_API_KEY=          # 留空走关键词兜底
-ZHIPU_MODEL=glm-4-flash # 对话模型
-APP_ENV=dev             # dev | prod（prod 禁用 dev_override，强制强密钥）
-JWT_SECRET=             # prod 必须 ≥32 位
+```bash
+python -m py_compile backend/main.py backend/auth.py backend/database.py backend/schemas.py
+cd frontend && npm run lint
 ```
 
-## 开发注意事项
-
-- 后端无测试套件，无 lint 配置；前端有 `npm run lint`（eslint-config-next），无测试
-- SQLite 数据库文件 `backend/intelligent_ark.db` 启动时自动创建，表迁移通过 `ALTER TABLE ... ADD COLUMN` + try/except 实现
-- 路演触发预警：`/chat` 页面 3 秒内连续点击 AI 头像 3 次打开 Dev Panel
-- 完整 API 规范和产品需求文档在 `PDRs/` 目录下
+`npm run build` 与 `npm run dev` 共用 `frontend/.next`：dev server 运行期间跑 build 会让页面请求返回 500（`Cannot find module './591.js'`）。需要 build 时先停 dev，跑完再重新 `npm run dev`。

@@ -4,17 +4,15 @@ import logging
 
 from fastapi import FastAPI, HTTPException, Response, Depends, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import AfterValidator, BaseModel
+from typing import Annotated, Optional
 
-from schemas import ChatRequest, ChatResponse
+from schemas import ChatRequest, ChatResponse, Scenario
 from llm_service import (
     chat_with_llm_complete,
     chat_stream_llm,
     YELLOW_ALERT_SCENE_UNIVERSITY,
     RED_ALERT_SCENE_UNIVERSITY,
-    YELLOW_ALERT_SCENE_COMMUNITY,
-    RED_ALERT_SCENE_COMMUNITY,
 )
 from fastapi.responses import StreamingResponse
 import sqlite3
@@ -75,7 +73,14 @@ import re
 _env_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 _allow_any = os.getenv("ALLOW_ANY_ORIGIN", "").lower() in ("1", "true", "yes")
 
-if _allow_any:
+if APP_ENV == "prod" and _allow_any:
+    raise RuntimeError("生产环境禁止 ALLOW_ANY_ORIGIN")
+
+if APP_ENV == "prod":
+    app.add_middleware(CORSMiddleware, allow_origins=_env_origins,
+                       allow_credentials=True, allow_methods=["GET", "POST", "DELETE"],
+                       allow_headers=["Authorization", "Content-Type"])
+elif _allow_any:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -106,9 +111,8 @@ else:
 @app.on_event("startup")
 def startup():
     init_db()
-    # 演示账号仅在非生产环境 seed；生产需显式 SEED_DEMO_USERS=1
-    seed_flag = os.getenv("SEED_DEMO_USERS", "").lower() in ("1", "true", "yes")
-    if APP_ENV != "prod" or seed_flag:
+    # 演示账号改为显式开启：只有设 SEED_DEMO_USERS=1 才会注入 001 / G001
+    if os.getenv("SEED_DEMO_USERS", "").lower() in ("1", "true", "yes"):
         seed_demo_users()
 
 
@@ -126,9 +130,37 @@ async def health():
 
 # ─── C端登录 / 注册 ────────────────────────────────────────────────────────────
 
+def _validate_account(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("账号不能为空")
+    return value
+
+
+def _validate_password_bytes(value: str) -> str:
+    # bcrypt limits UTF-8 bytes, not characters. Keep passwords unchanged;
+    # login still accepts existing passwords shorter than registration allows.
+    if len(value.encode("utf-8")) > 72:
+        raise ValueError("密码不能超过 72 个 UTF-8 字节（中文通常占 3 字节）")
+    return value
+
+
+def _validate_registration_password(value: str) -> str:
+    if len(value) < 6 or not value.strip():
+        raise ValueError("密码至少需要 6 位，且不能全部为空白")
+    return value
+
+
+Account = Annotated[str, AfterValidator(_validate_account)]
+LoginPassword = Annotated[str, AfterValidator(_validate_password_bytes)]
+RegistrationPassword = Annotated[
+    LoginPassword, AfterValidator(_validate_registration_password)
+]
+
+
 class CLoginRequest(BaseModel):
-    account: str
-    password: str
+    account: Account
+    password: LoginPassword
 
 
 class CLoginResponse(BaseModel):
@@ -140,9 +172,9 @@ class CLoginResponse(BaseModel):
 
 
 class CRegisterRequest(BaseModel):
-    account: str          # 学号（student）或 QQ 邮箱（social）
-    password: str
-    role: str             # "student" | "social"
+    account: Account          # 学号
+    password: RegistrationPassword
+    role: str = "student"
     school: Optional[str] = None
     student_id: Optional[str] = None
     education: Optional[str] = None
@@ -154,7 +186,7 @@ async def c_login(req: CLoginRequest, response: Response):
     user = verify_user(req.account, req.password)
     if not user:
         raise HTTPException(status_code=401, detail="账号或密码错误")
-    if user["role"] not in ("student", "social"):
+    if user["role"] != "student":
         raise HTTPException(status_code=403, detail="请使用 B 端入口登录")
 
     token = create_access_token(user["id"], user["account"], user["role"])
@@ -177,8 +209,8 @@ async def c_login(req: CLoginRequest, response: Response):
 
 @app.post("/api/auth/c-register", response_model=CLoginResponse)
 async def c_register(req: CRegisterRequest, response: Response):
-    if req.role not in ("student", "social"):
-        raise HTTPException(status_code=400, detail="非法的用户角色")
+    if req.role != "student":
+        raise HTTPException(status_code=400, detail="高校端仅支持学生账号")
     try:
         user_id = get_or_create_user(
             account=req.account,
@@ -223,27 +255,39 @@ async def auth_me(user: dict = Depends(get_current_user)):
     return user
 
 
+@app.get("/api/auth/c-me")
+async def student_me(user: dict = Depends(require_user)):
+    """返回当前学生身份，避免双端同时登录时读取到管理员 Cookie。"""
+    return user
+
+
+@app.get("/api/auth/b-me")
+async def admin_me(admin: dict = Depends(require_admin)):
+    """返回当前高校工作人员身份，避免双端同时登录时读取到学生 Cookie。"""
+    return admin
+
+
 # ─── B端管理员登录 / 注册 ────────────────────────────────────────────────────────
 
 class BLoginRequest(BaseModel):
-    worker_id: str
-    password: str
+    worker_id: Account
+    password: LoginPassword
 
 
 class BLoginResponse(BaseModel):
     success: bool
     token: Optional[str] = None
     user_id: Optional[int] = None
-    admin_type: Optional[str] = None  # "G" | "C"
-    role: Optional[str] = None        # "university" | "community"（前端展示用）
+    admin_type: Optional[str] = None  # "G"
+    role: Optional[str] = None        # "university"
     school_name: Optional[str] = None
     message: str = ""
 
 
 class BRegisterRequest(BaseModel):
-    worker_id: str
-    password: str
-    admin_type: str  # "G" | "C"
+    worker_id: Account
+    password: RegistrationPassword
+    admin_type: str = "G"
     school_name: Optional[str] = None
     invite_code: Optional[str] = None
 
@@ -267,15 +311,15 @@ async def b_register(req: BRegisterRequest):
 
     # 验证工号格式
     import re
-    pattern = r"^[GC]\d{3}$"
+    pattern = r"^G\d{3}$"
     if not re.match(pattern, req.worker_id):
-        raise HTTPException(status_code=400, detail="工号格式错误：G或C开头 + 3位数字")
+        raise HTTPException(status_code=400, detail="工号格式错误：G开头 + 3位数字")
 
     # 验证管理员类型与工号前缀匹配
     if req.worker_id.startswith("G") and req.admin_type != "G":
         raise HTTPException(status_code=400, detail="工号与管理员类型不匹配")
-    if req.worker_id.startswith("C") and req.admin_type != "C":
-        raise HTTPException(status_code=400, detail="工号与管理员类型不匹配")
+    if req.admin_type != "G":
+        raise HTTPException(status_code=400, detail="高校端仅支持 G 类型管理员")
 
     # 高校管理员必须有学校名称
     if req.admin_type == "G" and not req.school_name:
@@ -306,8 +350,10 @@ async def b_login(req: BLoginRequest, response: Response):
     if not user or user["role"] != "admin":
         raise HTTPException(status_code=401, detail="工号或密码错误")
 
-    # 获取管理员扩展信息
+    # 高校端只接受 G 类型管理员；旧 C 管理员凭据保持数据但不可登录
     profile = get_admin_profile(req.worker_id)
+    if not profile or profile.get("admin_type") != "G":
+        raise HTTPException(status_code=403, detail="高校端不支持该管理员账号")
 
     # 签发 JWT
     token = create_access_token(user["id"], user["account"], user["role"])
@@ -325,7 +371,7 @@ async def b_login(req: BLoginRequest, response: Response):
         token=token,
         user_id=user["id"],
         admin_type=profile.get("admin_type") if profile else None,
-        role="university" if profile.get("admin_type") == "G" else "community" if profile.get("admin_type") == "C" else None,
+        role="university",
         school_name=profile.get("school_name") if profile else None,
         message="登录成功",
     )
@@ -340,9 +386,9 @@ async def b_logout(response: Response):
 # ─── 核心对话（完整输出，不使用流式） ───────────────────────────────────────
 
 def _scenario_ok(s: str) -> str:
-    if s not in ("university", "community"):
-        raise HTTPException(status_code=400, detail="scenario 必须是 university 或 community")
-    return s
+    if s != "university":
+        raise HTTPException(status_code=400, detail="当前系统仅支持高校场景")
+    return "university"
 
 
 @app.post("/api/chat/stream")
@@ -356,21 +402,24 @@ async def chat_stream(
     """
     scenario = _scenario_ok(request.scenario)
     uid = current_user["id"]
+    if request.dev_override and not is_dev_env():
+        raise HTTPException(status_code=403, detail="dev_override 已在生产环境中禁用")
 
     # 1. 先持久化用户消息（这样即使 LLM 失败，用户的话也不丢）
     try:
         save_chat_message(uid, scenario, "user", request.message)
     except Exception as exc:
         logger.exception("save user message failed: %s", exc)
+        raise HTTPException(status_code=503, detail="消息保存失败，请稍后重试")
 
     # 2. dev_override：仅 dev 环境开放
-    if request.dev_override:
+    if request.dev_override and request.dev_override != "normal":
         if not is_dev_env():
             raise HTTPException(status_code=403, detail="dev_override 已在生产环境中禁用")
         if request.dev_override == "yellow_alert":
-            scene = YELLOW_ALERT_SCENE_COMMUNITY if scenario == "community" else YELLOW_ALERT_SCENE_UNIVERSITY
+            scene = YELLOW_ALERT_SCENE_UNIVERSITY
         elif request.dev_override == "red_alert":
-            scene = RED_ALERT_SCENE_COMMUNITY if scenario == "community" else RED_ALERT_SCENE_UNIVERSITY
+            scene = RED_ALERT_SCENE_UNIVERSITY
         elif request.dev_override == "normal":
             pass  # normal 不走 dev_override，正常调用 LLM
         else:
@@ -393,6 +442,8 @@ async def chat_stream(
         message=request.message,
         scenario=scenario,
         history=history,
+        companion_persona=request.companion_persona,
+        campus_context=request.campus_context.model_dump() if request.campus_context else None,
     )
     ra = {
         "level": response.risk_assessment.level,
@@ -425,6 +476,7 @@ def _persist_assistant_and_risk(
             )
     except Exception as exc:
         logger.exception("persist assistant/risk failed: %s", exc)
+        raise HTTPException(status_code=503, detail="回复或预警保存失败，请稍后重试")
 
 
 # ─── 对话历史 ──────────────────────────────────────────────────────────────
@@ -435,7 +487,7 @@ async def chat_stream_sse(
     current_user: dict = Depends(require_user),
 ):
     """
-    流式对话（SSE）。供 community 模式使用，让老人边生成边看到文字。
+    流式对话（SSE），供高校学生端逐字接收回复。
     协议：text/event-stream，每行 `data: {json}\\n\\n`
       - {"type":"delta","content":"..."} 增量
       - {"type":"done","reply":"...","risk_assessment":{...}} 收尾
@@ -443,11 +495,14 @@ async def chat_stream_sse(
     """
     scenario = _scenario_ok(request.scenario)
     uid = current_user["id"]
+    if request.dev_override and not is_dev_env():
+        raise HTTPException(status_code=403, detail="dev_override 已在生产环境中禁用")
 
     try:
         save_chat_message(uid, scenario, "user", request.message)
     except Exception as exc:
         logger.exception("save user message failed: %s", exc)
+        raise HTTPException(status_code=503, detail="消息保存失败，请稍后重试")
 
     # dev_override 预设剧本
     dev_scene = None
@@ -455,9 +510,9 @@ async def chat_stream_sse(
         if not is_dev_env():
             raise HTTPException(status_code=403, detail="dev_override 已在生产环境中禁用")
         if request.dev_override == "yellow_alert":
-            dev_scene = YELLOW_ALERT_SCENE_COMMUNITY if scenario == "community" else YELLOW_ALERT_SCENE_UNIVERSITY
+            dev_scene = YELLOW_ALERT_SCENE_UNIVERSITY
         elif request.dev_override == "red_alert":
-            dev_scene = RED_ALERT_SCENE_COMMUNITY if scenario == "community" else RED_ALERT_SCENE_UNIVERSITY
+            dev_scene = RED_ALERT_SCENE_UNIVERSITY
         elif request.dev_override == "normal":
             dev_scene = None
         else:
@@ -486,19 +541,21 @@ async def chat_stream_sse(
                 message=request.message,
                 scenario=scenario,
                 history=history,
+                companion_persona=request.companion_persona,
+                campus_context=request.campus_context.model_dump() if request.campus_context else None,
             ):
-                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
                 if evt.get("type") == "done":
                     final_reply = evt.get("reply", "")
                     final_ra = evt.get("risk_assessment") or {}
+                    _persist_assistant_and_risk(uid, scenario, final_reply, final_ra)
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
         except Exception as exc:
             logger.exception("stream gen 异常: %s", exc)
             err = {"type": "error", "message": "服务暂时不可用"}
             yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
             return
 
-        if final_reply and final_ra is not None:
-            _persist_assistant_and_risk(uid, scenario, final_reply, final_ra)
+
 
     return StreamingResponse(
         gen(),
@@ -512,13 +569,17 @@ async def asr_transcribe(
     file: UploadFile = File(...),
     user: dict = Depends(require_user),
 ):
-    from asr_service import transcribe_audio, ASR_MAX_BYTES
+    from asr_service import transcribe_audio, validate_audio_upload, ASR_MAX_BYTES
 
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="音频为空")
     if len(data) > ASR_MAX_BYTES:
         raise HTTPException(status_code=413, detail="音频超出大小限制")
+    try:
+        validate_audio_upload(file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=415, detail=str(exc))
     try:
         text = await transcribe_audio(
             data,
@@ -533,7 +594,7 @@ async def asr_transcribe(
 
 class TtsRequest(BaseModel):
     text: str
-    scenario: str = "community"
+    scenario: Scenario = "university"
 
 
 @app.post("/api/tts")
@@ -560,7 +621,7 @@ async def tts_synthesize(
 
 @app.get("/api/chat/history")
 async def chat_history(
-    scenario: str = Query(..., regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
     limit: int = Query(50, ge=1, le=200),
     user: dict = Depends(require_user),
 ):
@@ -569,7 +630,7 @@ async def chat_history(
 
 @app.delete("/api/chat/history")
 async def chat_history_clear(
-    scenario: Optional[str] = Query(None, regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
     user: dict = Depends(require_user),
 ):
     deleted = clear_chat_history(user["id"], scenario=scenario)
@@ -580,39 +641,42 @@ async def chat_history_clear(
 
 @app.get("/api/admin/alerts")
 async def admin_alerts(
+    response: Response,
     level: Optional[str] = Query(None, regex="^(green|yellow|red)$"),
-    scenario: Optional[str] = Query(None, regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
     handled: Optional[bool] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     admin: dict = Depends(require_admin),
 ):
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     events = list_risk_events(level=level, scenario=scenario, handled=handled, limit=limit)
     return {"items": events, "total": len(events)}
 
 
 @app.get("/api/admin/stats")
 async def admin_stats(
-    scenario: str = Query(..., regex="^(university|community)$"),
+    response: Response,
+    scenario: str = Query("university", pattern="^university$"),
     admin: dict = Depends(require_admin),
 ):
-    # community → social（独居老人）；university → student（学生）
-    role = "social" if scenario == "community" else "student"
-    return {"total_users": count_users_by_role(role)}
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return {"total_users": count_users_by_role("student")}
 
 
 @app.get("/api/admin/users")
 async def admin_users(
-    scenario: str = Query(..., regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
     admin: dict = Depends(require_admin),
 ):
-    role = "social" if scenario == "community" else "student"
-    return {"items": list_users_with_stats(role, scenario)}
+    return {"items": list_users_with_stats("student", scenario)}
 
 
 @app.get("/api/admin/users/{user_id}/activity")
 async def admin_user_activity(
     user_id: int,
-    scenario: str = Query(..., regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
     admin: dict = Depends(require_admin),
 ):
     return get_user_activity(user_id, scenario)
@@ -621,7 +685,7 @@ async def admin_user_activity(
 @app.get("/api/admin/users/{user_id}/interventions")
 async def admin_user_interventions(
     user_id: int,
-    scenario: str = Query(..., regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
     admin: dict = Depends(require_admin),
 ):
     return {"items": list_user_interventions(user_id, scenario)}
@@ -629,7 +693,7 @@ async def admin_user_interventions(
 
 @app.get("/api/admin/risk-trend")
 async def admin_risk_trend(
-    scenario: str = Query(..., regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
     days: int = Query(7, ge=1, le=30),
     admin: dict = Depends(require_admin),
 ):
@@ -638,7 +702,7 @@ async def admin_risk_trend(
 
 @app.get("/api/admin/risk-tags")
 async def admin_risk_tags(
-    scenario: str = Query(..., regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
     limit: int = Query(7, ge=1, le=20),
     admin: dict = Depends(require_admin),
 ):
@@ -656,6 +720,7 @@ async def admin_alert_handle(
     req: AlertHandleRequest = AlertHandleRequest(),
     admin: dict = Depends(require_admin),
 ):
+    """幂等确认跟进：重复提交仍成功，但保留首次处理人、时间、动作与备注。"""
     ok = mark_risk_event_handled(
         event_id,
         handled_by=admin.get("account"),
@@ -755,9 +820,8 @@ async def get_exam_countdown():
 
 # ─── 场景差异化聚合 API ────────────────────────────────────────────────────
 #
-# 前端一次拉取即可获得当前场景所需的所有侧边栏数据，避免 N 个请求。
-# university: 天气 + 考试倒计时 + 励志语 + 校园心理热线
-# community:  天气 + 今日日期/农历提示 + 服药/日程提醒 + 社区急救电话
+# 前端一次拉取即可获得当前场景所需的侧边栏数据。
+# 每日治愈语由服务端每天获取一次，避免客户端高频请求第三方公益接口。
 
 _DAILY_QUOTES_UNIVERSITY = [
     "允许一切发生。此刻的你，已经足够优秀了。",
@@ -767,55 +831,79 @@ _DAILY_QUOTES_UNIVERSITY = [
     "比起卷赢别人，先别让自己垮掉。",
 ]
 
-_COMMUNITY_DAILY_TIPS = [
-    {"icon": "💊", "text": "晨间降压药记得按时吃", "time": "08:00"},
-    {"icon": "🚶", "text": "天气好时下楼散步10分钟", "time": "10:00"},
-    {"icon": "🍚", "text": "中午饭记得清淡少盐", "time": "12:00"},
-    {"icon": "📺", "text": "今晚19:00 新闻联播", "time": "19:00"},
-    {"icon": "🛏️", "text": "睡前泡脚，早点休息", "time": "21:30"},
-]
+_DAILY_QUOTE_API_URL = os.getenv("DAILY_QUOTE_API_URL", "https://v1.hitokoto.cn/")
+_DAILY_QUOTE_CACHE: dict[str, dict[str, str]] = {}
+_QUOTE_BLOCKED_TERMS = (
+    "自杀", "轻生", "死亡", "绝望", "自残", "杀死", "坟墓", "尸体", "地狱",
+    "孤独", "痛苦", "抑郁", "悲伤", "遗憾", "离开", "消失", "放弃", "黑暗",
+    "噩梦", "折磨", "虚无", "失败",
+)
 
-# 高校心理援助热线 / 社区急救 & 网格员联系方式
+
+def _fallback_daily_quote(today: date) -> dict[str, str]:
+    return {
+        "text": _DAILY_QUOTES_UNIVERSITY[today.toordinal() % len(_DAILY_QUOTES_UNIVERSITY)],
+        "source": "智伴方舟",
+    }
+
+
+def _quote_is_safe(text: str) -> bool:
+    return 4 <= len(text) <= 48 and not any(term in text for term in _QUOTE_BLOCKED_TERMS)
+
+
+async def _get_daily_quote() -> dict[str, str]:
+    """每天随机获取一条短句；当天固定，失败或内容不适宜时使用本地兜底。"""
+    today = date.today()
+    cache_key = today.isoformat()
+    if cache_key in _DAILY_QUOTE_CACHE:
+        return _DAILY_QUOTE_CACHE[cache_key]
+
+    quote = _fallback_daily_quote(today)
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                _DAILY_QUOTE_API_URL,
+                params=[
+                    ("c", "e"),
+                    ("c", "k"),
+                    ("encode", "json"),
+                    ("charset", "utf-8"),
+                    ("max_length", "48"),
+                ],
+                headers={"Accept": "application/json", "User-Agent": "Intelligent-Ark/1.0"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        text = " ".join(str(payload.get("hitokoto") or "").split()).strip("“”\" ")
+        if _quote_is_safe(text):
+            source = " ".join(str(payload.get("from") or "一言").split())[:40]
+            quote = {"text": text, "source": source or "一言"}
+        else:
+            logger.warning("daily quote rejected by safety filter")
+    except Exception as exc:
+        logger.warning("daily quote fetch failed: %s", exc)
+
+    _DAILY_QUOTE_CACHE.clear()
+    _DAILY_QUOTE_CACHE[cache_key] = quote
+    return quote
+
 _HOTLINES = {
     "university": [
         {"label": "24h 心理援助热线", "phone": "400-161-9995"},
         {"label": "北京心理危机干预", "phone": "010-82951332"},
-    ],
-    "community": [
-        {"label": "紧急急救", "phone": "120"},
-        {"label": "社区服务热线", "phone": os.getenv("COMMUNITY_HOTLINE", "12345")},
     ],
 }
 
 
 @app.get("/api/scenario/context")
 async def scenario_context(
-    scenario: str = Query(..., regex="^(university|community)$"),
+    scenario: str = Query("university", pattern="^university$"),
 ):
-    """聚合返回场景差异化上下文，前端一次请求即可渲染侧边栏。"""
-    weather = await _fetch_weather()
-    today = date.today()
-
-    if scenario == "university":
-        # 用日期 seed 让同一天展示同一句，不同天轮换
-        quote = _DAILY_QUOTES_UNIVERSITY[today.toordinal() % len(_DAILY_QUOTES_UNIVERSITY)]
-        return {
-            "scenario": "university",
-            "weather": weather,
-            "exam_countdown": _exam_countdown(),
-            "daily_quote": quote,
-            "hotlines": _HOTLINES["university"],
-        }
-
-    # community
-    weekday_cn = "一二三四五六日"[today.weekday()]
+    """返回高校侧栏所需的每日治愈语与求助资源。"""
+    quote = await _get_daily_quote()
     return {
-        "scenario": "community",
-        "weather": weather,
-        "today": {
-            "date": today.isoformat(),
-            "weekday": f"星期{weekday_cn}",
-        },
-        "daily_tips": _COMMUNITY_DAILY_TIPS,
-        "hotlines": _HOTLINES["community"],
+        "scenario": "university",
+        "daily_quote": quote["text"],
+        "daily_quote_source": quote["source"],
+        "hotlines": _HOTLINES["university"],
     }

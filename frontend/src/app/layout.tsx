@@ -4,8 +4,8 @@ import { ScenarioProvider } from "@/lib/scenario-context";
 import { ToastProvider } from "@/lib/use-toast";
 
 export const metadata: Metadata = {
-  title: "✨ 智伴方舟 · 智能陪伴",
-  description: "您的专属情绪治理与生活陪伴助手",
+  title: "智伴方舟 · 高校心理支持",
+  description: "面向高校学生与心理工作者的 AI 心理陪伴与风险预警平台",
 };
 
 export default function RootLayout({
@@ -14,8 +14,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="zh-CN">
-      <body>
+    <html lang="zh-CN" data-scroll-behavior="smooth">
+      <body className="min-h-screen">
+        <a href="#main-content" className="ark-skip-link">跳到主要内容</a>
         <ScenarioProvider>
           <ToastProvider>{children}</ToastProvider>
         </ScenarioProvider>
