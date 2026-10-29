@@ -310,6 +310,17 @@ class BackendContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pending.json()["items"]), 1)
         self.assertEqual(pending.json()["items"][0]["status"], "pending")
 
+        # 认领必须走 /claim，流转接口不能代认领（否则没有 assignee 空值条件）
+        via_transition = await self.client.post(
+            f"/api/admin/alerts/{event}/transition",
+            headers=admin,
+            json={"to_status": "claimed", "reason": "不得经流转认领"},
+        )
+        self.assertEqual(via_transition.status_code, 409, via_transition.text)
+        still = database.get_risk_event(event)
+        self.assertEqual(still["status"], "pending")
+        self.assertFalse(still["assignee"])
+
         # PRD 5.2：未认领不能直接进入干预
         skipped = await self.client.post(
             f"/api/admin/alerts/{event}/transition",

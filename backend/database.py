@@ -912,10 +912,11 @@ VALID_STATUSES = (
     "pending", "claimed", "verifying", "intervening", "referred", "monitoring", "closed",
 )
 
-# 合法边：from → set(to)。对齐 PRD 5.2：pending 只能认领，不能跳过负责人直接干预。
+# 合法边：from → set(to)。pending→claimed 只由 claim_risk_event / assign_risk_event 写入，
+# 它们用 assignee 为空的条件更新避免并发认领互相覆盖。流转接口不承接认领。
 # claimed → intervening / monitoring 保留给已认领后的工作台路径；closed→monitoring 非法。
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"claimed"},
+    "pending": set(),
     "claimed": {"verifying", "intervening", "monitoring"},
     "verifying": {"intervening", "closed"},
     "intervening": {"referred", "monitoring", "closed"},
@@ -1012,18 +1013,10 @@ def transition_risk_event(
                 (event_id,),
             )
         else:
-            extras = ""
-            params: list = [to_status]
-            if to_status == "claimed" and not row["assignee"]:
-                extras = ", assignee = ?, claimed_at = COALESCE(claimed_at, " + sql_now() + ")"
-                params.append(actor)
-            if to_status == "monitoring":
-                pass
-            params.append(event_id)
             conn.execute(
-                f"UPDATE risk_events SET status = ?{extras} "
+                "UPDATE risk_events SET status = ? "
                 "WHERE id = ? AND scenario = 'university'",
-                params,
+                (to_status, event_id),
             )
             if to_status == "monitoring":
                 _schedule_reassessments(conn, event_id)
