@@ -912,12 +912,10 @@ VALID_STATUSES = (
     "pending", "claimed", "verifying", "intervening", "referred", "monitoring", "closed",
 )
 
-# 合法边：from → frozenset(to)
-# Acceptance_Admin_Batch3 最少可见路径：
-# pending/claimed → intervening / monitoring → closed
-# verifying/referred 可暂存、不与上表冲突；closed→monitoring 非法
+# 合法边：from → set(to)。对齐 PRD 5.2：pending 只能认领，不能跳过负责人直接干预。
+# claimed → intervening / monitoring 保留给已认领后的工作台路径；closed→monitoring 非法。
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"claimed", "intervening", "monitoring"},
+    "pending": {"claimed"},
     "claimed": {"verifying", "intervening", "monitoring"},
     "verifying": {"intervening", "closed"},
     "intervening": {"referred", "monitoring", "closed"},
@@ -1367,7 +1365,8 @@ def enrich_risk_event_timeout(event: dict, *, persist_escalation: bool = True) -
     overdue_minutes = 0
     due_dt = _parse_ts(due)
     now = _now_local()
-    if status == "pending" and not event.get("assignee") and due_dt and now > due_dt:
+    # POOL-02：超过认领截止时间仍为 pending 即超时，含已填负责人但尚未认领的事件。
+    if status == "pending" and due_dt and now > due_dt:
         is_overdue = True
         overdue_minutes = max(0, int((now - due_dt).total_seconds() // 60))
         if persist_escalation and not event.get("escalated_at"):

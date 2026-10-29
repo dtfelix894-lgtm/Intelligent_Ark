@@ -310,6 +310,15 @@ class BackendContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pending.json()["items"]), 1)
         self.assertEqual(pending.json()["items"][0]["status"], "pending")
 
+        # PRD 5.2：未认领不能直接进入干预
+        skipped = await self.client.post(
+            f"/api/admin/alerts/{event}/transition",
+            headers=admin,
+            json={"to_status": "intervening", "reason": "未认领不得干预"},
+        )
+        self.assertEqual(skipped.status_code, 409, skipped.text)
+        self.assertEqual(database.get_risk_event(event)["status"], "pending")
+
         # 非法：closed → monitoring（先认领再关再试）
         claimed = await self.client.post(f"/api/admin/alerts/{event}/claim", headers=admin)
         self.assertEqual(claimed.status_code, 200, claimed.text)
@@ -535,6 +544,19 @@ class BackendContractTests(unittest.IsolatedAsyncioTestCase):
             # no chat original fields
             self.assertNotIn("content", hit)
             self.assertNotIn("messages", hit)
+
+            # 已写入负责人但状态仍是 pending 时，过截止时间同样算超时
+            with database.get_conn() as conn:
+                conn.execute(
+                    "UPDATE risk_events SET assignee = ?, status = 'pending' WHERE id = ?",
+                    ("G401", eid),
+                )
+            assigned_pending = await self.client.get("/api/admin/alerts?handled=false", headers=admin)
+            self.assertEqual(assigned_pending.status_code, 200, assigned_pending.text)
+            hit_assigned = next(i for i in assigned_pending.json()["items"] if i["id"] == eid)
+            self.assertEqual(hit_assigned.get("status"), "pending")
+            self.assertEqual(hit_assigned.get("assignee"), "G401")
+            self.assertTrue(hit_assigned.get("is_overdue"))
 
             overdue = await self.client.get("/api/admin/overdue-count", headers=admin)
             self.assertEqual(overdue.status_code, 200)
