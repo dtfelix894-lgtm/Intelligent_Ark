@@ -30,7 +30,13 @@ class ReleaseTests(unittest.TestCase):
     def test_existing_workflow_and_guards(self):
         with patch.object(database, "DB_PATH", Path(tempfile.mkdtemp(prefix="ark-release-")) / "test.db"):
             database.init_db()
-            database.seed_demo_users()
+            # 自建临时管理员，不依赖演示种子账号
+            database.get_or_create_user(
+                "G900",
+                "test-pass-900",
+                "admin",
+                {"admin_type": "G", "school_name": "测试大学"},
+            )
             async def run():
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as c:
                     registration = await c.post(
@@ -76,14 +82,14 @@ class ReleaseTests(unittest.TestCase):
                     self.assertEqual(context.json()["daily_quote_source"], "测试来源")
                     self.assertNotIn("weather", context.json())
                     self.assertNotIn("exam_countdown", context.json())
-                    admin = await c.post("/api/auth/b-login", json={"worker_id":"G001","password":"123456"})
+                    admin = await c.post("/api/auth/b-login", json={"worker_id":"G900","password":"test-pass-900"})
                     ah = {"Authorization": "Bearer " + admin.json()["token"]}
                     # 双端 Cookie 同时存在时，右上角账户设置仍须读取各自身份。
                     student_profile = await c.get("/api/auth/c-me")
                     admin_profile = await c.get("/api/auth/b-me")
                     self.assertEqual(student_profile.json()["account"], "2026001")
                     self.assertEqual(student_profile.json()["student_id"], "2026001")
-                    self.assertEqual(admin_profile.json()["account"], "G001")
+                    self.assertEqual(admin_profile.json()["account"], "G900")
                     self.assertEqual(admin_profile.json()["admin_type"], "G")
                     # 同一浏览器同时持有 c_token 与 b_token 时，两端必须各取各的 Cookie。
                     with patch("llm_service.API_KEY", ""):
@@ -109,7 +115,7 @@ class ReleaseTests(unittest.TestCase):
                     red_events = (await c.get("/api/admin/alerts?handled=false", headers=ah)).json()["items"]
                     self.assertEqual(len(red_events), 2)
                     self.assertEqual({event["level"] for event in red_events}, {"yellow", "red"})
-                    # 同一注册学生产生两条预警，学生账号仍只能计为 1；演示账号 001 不计入。
+                    # 同一注册学生触发两条预警后，学生账号数仍只能计为 1。
                     stats = await c.get("/api/admin/stats", headers=ah)
                     self.assertEqual(stats.status_code, 200)
                     self.assertEqual(stats.json()["total_users"], 1)

@@ -77,7 +77,7 @@ def main() -> int:
     env.update({
         "ARK_ACCEPTANCE": "1", "ARK_VERIFY": "1", "ARK_ARTIFACT_DIR": str(artifacts),
         "ARK_BACKEND_PORT": str(backend_port), "DB_PATH": str(artifacts / "acceptance.db"),
-        "APP_ENV": "dev", "JWT_SECRET": secrets.token_hex(32), "SEED_DEMO_USERS": "0",
+        "APP_ENV": "dev", "JWT_SECRET": secrets.token_hex(32),
         "LLM_API_KEY": "", "ZHIPU_API_KEY": "", "MIMO_API_KEY": "", "ADMIN_INVITE_CODE": "",
         "NEXT_PUBLIC_API_BASE": "", "API_UPSTREAM": f"http://127.0.0.1:{backend_port}",
         "PYTHONIOENCODING": "utf-8", "NEXT_TELEMETRY_DISABLED": "1", "ALLOW_ANY_ORIGIN": "0",

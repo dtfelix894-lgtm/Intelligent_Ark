@@ -1,2 +1,10 @@
 "use client";
-export function RightPanel(){return <aside className="hidden w-64 shrink-0 border-l border-slate-800 p-5 xl:block"><p className="text-xs uppercase tracking-widest text-cyan-300">校园资源</p><div className="mt-4 space-y-3 text-sm text-slate-300"><a className="block rounded-lg bg-slate-900 p-3 hover:bg-slate-800" href="tel:400-161-9995">24h 心理援助热线<br/><span className="text-cyan-300">400-161-9995</span></a><div className="rounded-lg bg-slate-900 p-3">需要立即帮助？请联系辅导员、学校心理中心或身边可信任的人。</div></div></aside>}
+
+/**
+ * @deprecated 旧聊天右栏，未被 `app/chat/page.tsx` 使用。
+ * 求助资源请走 `_components/HelpResources`（读 `/api/help-resources`）。
+ * 保留文件以免误删历史参考；请勿重新接入写死热线。
+ */
+export function RightPanel() {
+  return null;
+}

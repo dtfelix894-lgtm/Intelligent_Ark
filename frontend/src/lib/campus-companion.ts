@@ -117,3 +117,23 @@ export function buildCampusGreeting(
     description: `${name}会跟着你的节奏聊。时间提示基于设备时间和月份，未接入个人课表或学校校历。可以只说一句“我有点累” 🙂`,
   };
 }
+
+
+/** COMP-06：写入服务端人设；失败时由调用方保留本地降级提示。 */
+export async function saveCompanionPersonaRemote(persona: CompanionPersona): Promise<boolean> {
+  try {
+    const { apiJson } = await import("@/lib/api");
+    await apiJson<{ success: boolean }>("/api/auth/c-preferences", {
+      method: "PATCH",
+      side: "c",
+      body: { companion_persona: persona },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeCompanionPersona(value: unknown): CompanionPersona {
+  return value === "senior_brother" ? "senior_brother" : DEFAULT_COMPANION_PERSONA;
+}

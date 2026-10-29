@@ -61,3 +61,14 @@ NEXT_PUBLIC_API_BASE 保持未设置，浏览器默认请求同源 /api。next.c
 backend/test_release.py 使用临时数据库验证登录、风险消息落库、管理处置、旧管理员 Token 拒绝、生产调试参数无写入和退出 Cookie 清除。运行：cd backend 后 python -m unittest test_release。临时数据库保留用于检查，不改正式数据。
 
 上线验收还需要在实际域名上核对证书、网络防火墙、模型账户、备份恢复。当前权限是单校角色模型，不具备多高校租户隔离；不要作为多校共享 SaaS 发布。现有风险判定为纯关键词匹配（红：自杀/轻生/不想活/结束生命/自残；黄：失眠/睡不着/焦虑/崩溃/压力很大/抑郁/绝望），不含关键词的委婉危机表达会被判为绿色，上线前需评估是否可接受；SSE 当前是生成完整回复后按 12 字符分段发送；本轮不扩展算法或业务能力。
+
+
+## 数据库（SQLite → PostgreSQL 过渡）
+
+- 默认仍用 SQLite：不设 `DATABASE_URL` 时走 `DB_PATH`（与现网一致）。
+- 切换 Postgres：设置 `DATABASE_URL=postgresql://ark_app:…@127.0.0.1:5432/intelligent_ark`，并 `pip install -r requirements.txt`（含 `psycopg[binary,pool]`）。
+- 启动时 `init_db()` 在 PG 上加载 `backend/sql/pg_schema_v1.sql`（与 Ark 数据库同事脚本一致，勿另起 DDL）。
+- 数据迁移：`python backend/scripts/migrate_sqlite_to_pg.py --sqlite-only-check`（无需密码）；正式迁移等密码到位后设 `DATABASE_URL` 再跑（见脚本头部说明）。
+- 时间策略：PG 存 `TIMESTAMPTZ` UTC；API 对外仍输出 Asia/Taipei 墙钟字符串，避免前端字段漂移。
+- 密码未到前不要强行连 PG；URL 含占位密码会清晰报错，清空 `DATABASE_URL` 即可回退 SQLite。
+

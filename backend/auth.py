@@ -95,7 +95,7 @@ def _resolve_user(token: Optional[str]) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号已失效")
     if current.get("role") not in ("student", "admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="当前产品不支持该账号")
-    user.update({k: current.get(k) for k in ("school", "student_id", "education", "admin_type", "school_name")})
+    user.update({k: current.get(k) for k in ("school", "student_id", "education", "admin_type", "school_name", "companion_persona")})
     return user
 
 

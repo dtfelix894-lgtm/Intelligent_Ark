@@ -67,3 +67,10 @@ yarn-debug.log*
 # Claude Code 本地缓存
 .claude/
 memory/
+
+# 验收截图、临时脚本与音频备份（不入库）
+/_acceptance_shots/
+/_tmp_*.txt
+/backend/_*.py
+/frontend/.agent-work/
+*.orig.bak

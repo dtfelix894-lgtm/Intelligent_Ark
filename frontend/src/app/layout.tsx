@@ -5,7 +5,7 @@ import { ToastProvider } from "@/lib/use-toast";
 
 export const metadata: Metadata = {
   title: "智伴方舟 · 高校心理支持",
-  description: "面向高校学生与心理工作者的 AI 心理陪伴与风险预警平台",
+  description: "面向高校学生的 AI 心理陪伴与自助减压平台",
 };
 
 export default function RootLayout({

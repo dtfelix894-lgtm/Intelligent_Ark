@@ -4,8 +4,8 @@ import { ArrowRight, BrainCircuit, GraduationCap, HeartHandshake, Leaf, ShieldCh
 const capabilities = [
   { icon: HeartHandshake, title: "AI 情绪陪伴", text: "和知心学姐聊聊学业、就业、人际关系与当下的心情。" },
   { icon: Leaf, title: "校园减压工具", text: "用声音、正念、解压锦囊与情绪释放工具照顾自己。" },
-  { icon: BrainCircuit, title: "风险信号识别", text: "在对话中识别值得关注的信号，并给出温和、安全的回应。" },
-  { icon: Users, title: "高校人员跟进", text: "辅导员和心理中心通过工作端查看脱敏预警并完成跟进。" },
+  { icon: BrainCircuit, title: "温和安全回应", text: "在对话中给出体贴、安全的回应，并在需要时提示你求助。" },
+  { icon: Users, title: "需要时的求助入口", text: "一键查看心理中心、热线与预约等求助方式，联系身边可信任的人。" },
 ];
 
 export default function Home() {
@@ -53,7 +53,7 @@ export default function Home() {
 
       <section aria-labelledby="capability-title" className="border-y border-border/80 bg-white/75 py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="max-w-2xl"><p className="text-sm font-semibold text-primary">校园支持闭环</p><h2 id="capability-title" className="mt-2 text-3xl font-bold tracking-tight">从愿意开口，到有人接住</h2><p className="mt-4 text-muted-foreground">只保留高校场景，让学生的自助减压、AI 陪伴和工作端跟进处在同一条清晰链路中。</p></div>
+          <div className="max-w-2xl"><p className="text-sm font-semibold text-primary">陪伴与自助</p><h2 id="capability-title" className="mt-2 text-3xl font-bold tracking-tight">愿意开口时，这里陪着你</h2><p className="mt-4 text-muted-foreground">面向高校学生的 AI 陪伴与自助减压；需要时也能找到求助入口。</p></div>
           <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {capabilities.map(({ icon: Icon, title, text }) => <article key={title} className="ark-soft-card p-6"><span className="ark-icon-tile"><Icon className="h-5 w-5" aria-hidden="true" /></span><h3 className="mt-5 text-lg font-semibold">{title}</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p></article>)}
           </div>

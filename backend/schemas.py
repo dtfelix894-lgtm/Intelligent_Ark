@@ -41,6 +41,31 @@ class RiskAssessment(BaseModel):
     summary_for_admin: str = ""
 
 
+
+
+class HelpResourcePhone(BaseModel):
+    label: str
+    phone: str
+    kind: Optional[Literal["psych_center", "hotline"]] = None
+
+
+class HelpResourceAppointment(BaseModel):
+    label: str
+    url: str
+
+
+class CrisisSupport(BaseModel):
+    """COMP-04：红色风险时随聊天响应返回的危机支持卡片载荷。"""
+    message: str
+    resources: List[HelpResourcePhone] = []
+    appointment: Optional[HelpResourceAppointment] = None
+    configured: bool = False
+    is_placeholder: bool = False
+    missing_hint: Optional[str] = None
+    trust_prompt: str = "现在就告诉身边信任的人，并联系学校心理中心。"
+
+
 class ChatResponse(BaseModel):
     reply: str
     risk_assessment: RiskAssessment
+    crisis_support: Optional[CrisisSupport] = None
