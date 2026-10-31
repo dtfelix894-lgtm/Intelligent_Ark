@@ -6,7 +6,7 @@
  *   覆盖有效会话。
  * - 只有显式配置 NEXT_PUBLIC_API_BASE、前后端跨域时，才使用 localStorage
  *   中的 JWT 作为 Authorization Bearer token。
- * - 非 HttpOnly cookie 仍用于 Next.js middleware 路由守卫。
+ * - 路由守卫在 Server Layout（route-guard）中读取 HttpOnly Cookie。
  * - 登出清除本地凭证，并由网站中间件清除本端 HttpOnly Cookie。
  */
 import Cookies from "js-cookie";
