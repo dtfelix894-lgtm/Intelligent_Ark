@@ -10,7 +10,7 @@ import {
   GAD7_INTRO,
   GAD7_ITEMS,
   LIKERT_OPTIONS,
-  NON_DIAGNOSIS_DISCLAIMER,
+  SCALE_HELP_HINT,
   PHQ9_BANDS,
   PHQ9_INTRO,
   PHQ9_ITEMS,
@@ -79,6 +79,7 @@ function ScaleRunner({
   const [done, setDone] = useState(false);
   const [crisis, setCrisis] = useState<CrisisSupport | null>(null);
   const [crisisLoading, setCrisisLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const score = useMemo(
     () => answers.reduce<number>((sum, v) => sum + (typeof v === "number" ? v : 0), 0),
@@ -104,12 +105,12 @@ function ScaleRunner({
         if (!cancelled) {
           setCrisis({
             message:
-              "你选到了与自我伤害相关的想法。请立刻联系身边可信任的人或学校心理中心，不要独自硬撑。这不是诊断，但值得被认真对待。",
+              "你选到了与自我伤害相关的想法。请立刻联系身边可信任的人或学校心理中心，不要独自硬撑。",
             resources: [],
             appointment: null,
             configured: false,
             is_placeholder: false,
-            missing_hint: "求助资源暂未配置或加载失败。请打开「帮助」页重试，或直接联系学校心理中心、辅导员或身边可信任的人。",
+            missing_hint: "求助资源暂不可用。请打开「帮助」页查看，或联系学校心理中心、辅导员或身边可信任的人。",
             trust_prompt: "现在就告诉身边信任的人。",
           });
         }
@@ -122,7 +123,8 @@ function ScaleRunner({
     };
   }, [showCrisis, q9]);
 
-  function choose(value: number) {
+  async function choose(value: number) {
+    if (submitting) return;
     const next = [...answers];
     next[step] = value;
     setAnswers(next);
@@ -131,6 +133,8 @@ function ScaleRunner({
     const hitCritical = kind === "phq9" && items[step]?.critical && value > 0;
 
     if (step >= items.length - 1) {
+      setSubmitting(true);
+      await new Promise((r) => window.setTimeout(r, 240));
       const finalScore = next.reduce<number>((sum, v) => sum + (typeof v === "number" ? v : 0), 0);
       const finalBand = bandFor(finalScore, bands);
       saveResult({
@@ -142,6 +146,7 @@ function ScaleRunner({
         at: new Date().toISOString(),
       });
       setDone(true);
+      setSubmitting(false);
       return;
     }
 
@@ -167,7 +172,7 @@ function ScaleRunner({
 
       <div className="rounded-2xl border border-violet-100 bg-violet-50/80 p-3 text-xs leading-5 text-violet-950">
         <p className="font-semibold">{title}</p>
-        <p className="mt-1">{NON_DIAGNOSIS_DISCLAIMER}</p>
+        <p className="mt-1">{SCALE_HELP_HINT}</p>
       </div>
 
       {midCrisis && (
@@ -204,13 +209,19 @@ function ScaleRunner({
               若你现在有伤害自己的想法，请先寻求现实支持。继续作答不会代替求助。
             </p>
           ) : null}
+          {submitting ? (
+            <p className="mt-4 text-sm font-semibold text-violet-800" role="status">
+              正在汇总…
+            </p>
+          ) : null}
           <div className="mt-4 space-y-2">
             {LIKERT_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 type="button"
-                onClick={() => choose(opt.value)}
-                className="ark-interactive flex min-h-12 w-full items-center rounded-xl border border-border bg-secondary/40 px-3 text-left text-sm font-semibold hover:bg-secondary active:scale-[0.99]"
+                disabled={submitting}
+                onClick={() => void choose(opt.value)}
+                className="ark-interactive flex min-h-12 w-full items-center rounded-xl border border-border bg-secondary/40 px-3 text-left text-sm font-semibold hover:bg-secondary active:scale-[0.99] disabled:opacity-50"
               >
                 <span className="mr-3 grid h-8 w-8 place-items-center rounded-lg bg-white text-xs text-primary">
                   {opt.value}
@@ -229,9 +240,9 @@ function ScaleRunner({
               <span className="ml-1 text-base font-semibold text-muted-foreground">/ {maxScore}</span>
             </p>
             <p className="mt-2 text-sm font-semibold text-foreground">{band.label}</p>
-            <p className="mt-3 text-sm leading-6 text-muted-foreground">{NON_DIAGNOSIS_DISCLAIMER}</p>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              结果仅保存在本机浏览器，仅本人可见。
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">{SCALE_HELP_HINT}</p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground" role="status">
+              已保存本次结果。
             </p>
             <button
               type="button"
@@ -263,7 +274,7 @@ function ScaleRunner({
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
               <p className="text-sm font-semibold text-amber-950">建议看看求助资源</p>
               <p className="mt-1 text-xs leading-5 text-amber-900">
-                分档偏中高时，优先联系现实支持。以下为学校配置的帮助入口（非诊断建议）。
+                分档偏中高时，优先联系现实支持。以下为学校配置的帮助入口。
               </p>
               <div className="mt-3">
                 <HelpResources />
@@ -330,7 +341,7 @@ export function SelfAssessPanel({ onOpenHelp }: Props) {
           <ClipboardList className="h-5 w-5 text-violet-700" aria-hidden="true" />
           <h3 className="font-semibold text-violet-950">自测 · 日记 · 科普</h3>
         </div>
-        <p className="mt-2 text-xs leading-5 text-violet-900">{NON_DIAGNOSIS_DISCLAIMER}</p>
+        <p className="mt-2 text-xs leading-5 text-violet-900">{SCALE_HELP_HINT}</p>
       </div>
 
       <button
@@ -339,10 +350,10 @@ export function SelfAssessPanel({ onOpenHelp }: Props) {
         className="ark-interactive flex min-h-16 w-full flex-col items-start rounded-xl border border-border bg-white px-3 py-3 text-left hover:bg-secondary/50"
       >
         <span className="text-sm font-semibold">PHQ-9 情绪自测</span>
-        <span className="mt-1 text-xs text-muted-foreground">9 题 · 过去两周 · 这不是诊断</span>
+        <span className="mt-1 text-xs text-muted-foreground">9 题 · 过去两周</span>
         {saved.phq9 ? (
           <span className="mt-2 text-[11px] text-muted-foreground">
-            上次本机结果：{saved.phq9.score} 分（{saved.phq9.bandLabel}）
+            上次结果：{saved.phq9.score} 分（{saved.phq9.bandLabel}）
           </span>
         ) : null}
       </button>
@@ -353,17 +364,13 @@ export function SelfAssessPanel({ onOpenHelp }: Props) {
         className="ark-interactive flex min-h-16 w-full flex-col items-start rounded-xl border border-border bg-white px-3 py-3 text-left hover:bg-secondary/50"
       >
         <span className="text-sm font-semibold">GAD-7 焦虑自测</span>
-        <span className="mt-1 text-xs text-muted-foreground">7 题 · 过去两周 · 这不是诊断</span>
+        <span className="mt-1 text-xs text-muted-foreground">7 题 · 过去两周</span>
         {saved.gad7 ? (
           <span className="mt-2 text-[11px] text-muted-foreground">
-            上次本机结果：{saved.gad7.score} 分（{saved.gad7.bandLabel}）
+            上次结果：{saved.gad7.score} 分（{saved.gad7.bandLabel}）
           </span>
         ) : null}
       </button>
-
-      <p className="text-[11px] leading-4 text-muted-foreground">
-        量表结果仅本人本机可见。这不是诊断；中文版最终以学校心理中心确认为准。
-      </p>
 
       <div className="border-t border-border pt-4">
         <CbtThoughtRecord />

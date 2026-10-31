@@ -22,6 +22,11 @@ type Props = {
   onFilter: (actor: string, action: string) => void;
 };
 
+const TARGET_CN: Record<string, string> = {
+  risk_event: "预警",
+  user: "账号",
+};
+
 const ACTION_CN: Record<string, string> = {
   view_alert: "查看详情",
   claim_alert: "认领",
@@ -31,7 +36,7 @@ const ACTION_CN: Record<string, string> = {
   complete_reassessment: "完成复评",
   create_reassessment: "创建复评",
   escalate_overdue: "超时升级",
-  view_audit_logs: "查看审计",
+  view_audit_logs: "查看操作记录",
 };
 
 export function AuditLogPanel({ items, loading, error, onRetry, onFilter }: Props) {
@@ -44,10 +49,10 @@ export function AuditLogPanel({ items, loading, error, onRetry, onFilter }: Prop
         <div>
           <h2 id="audit-title" className="flex items-center gap-2 text-xl font-bold">
             <ClipboardList className="h-5 w-5 text-primary" aria-hidden="true" />
-            审计日志
+            操作记录
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            仅脱敏元数据（操作者、动作、对象、时间）；不含学生消息原文与密钥。
+            记录谁在何时对哪条预警做了哪些操作；不含学生聊天原文。
           </p>
         </div>
         <button
@@ -71,7 +76,7 @@ export function AuditLogPanel({ items, loading, error, onRetry, onFilter }: Prop
         <input
           value={action}
           onChange={(e) => setAction(e.target.value)}
-          placeholder="按动作筛选（如 view_alert）"
+          placeholder="按操作类型筛选"
           className="min-h-10 min-w-[12rem] rounded-xl border border-border px-3 text-sm"
         />
         <button
@@ -90,13 +95,13 @@ export function AuditLogPanel({ items, loading, error, onRetry, onFilter }: Prop
       ) : null}
 
       {loading && items.length === 0 ? (
-        <div className="space-y-2" aria-label="审计加载中">
+        <div className="space-y-2" aria-label="操作记录加载中">
           {[0, 1, 2].map((n) => (
             <div key={n} className="h-14 animate-pulse rounded-xl bg-muted/60 motion-reduce:animate-none" />
           ))}
         </div>
       ) : items.length === 0 ? (
-        <div className="ark-soft-card py-10 text-center text-sm text-muted-foreground">暂无审计记录</div>
+        <div className="ark-soft-card py-10 text-center text-sm text-muted-foreground">暂无操作记录</div>
       ) : (
         <ul className="space-y-2">
           {items.map((row) => (
@@ -110,14 +115,9 @@ export function AuditLogPanel({ items, loading, error, onRetry, onFilter }: Prop
                   {ACTION_CN[row.action] || row.action}
                 </span>
                 <span className="text-muted-foreground">
-                  {row.target_type} #{row.target_id}
+                  {TARGET_CN[row.target_type] || "相关对象"} #{row.target_id}
                 </span>
               </div>
-              {row.meta && Object.keys(row.meta).length > 0 ? (
-                <p className="mt-1 break-all text-xs text-muted-foreground">
-                  {JSON.stringify(row.meta)}
-                </p>
-              ) : null}
             </li>
           ))}
         </ul>

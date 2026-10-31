@@ -51,7 +51,24 @@ def wait_ready(url: str, process: subprocess.Popen, timeout: int = 60) -> None:
     raise TimeoutError(f"Service readiness timed out: {url}")
 
 
+def resolve_acceptance_database_url() -> str:
+    for key in ("ARK_TEST_DATABASE_URL", "TEST_DATABASE_URL", "DATABASE_URL"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw.lower().startswith(("postgresql://", "postgres://")):
+            return raw
+    return ""
+
+
 def main() -> int:
+    db_url = resolve_acceptance_database_url()
+    if not db_url:
+        print(
+            "Acceptance requires PostgreSQL: set DATABASE_URL or ARK_TEST_DATABASE_URL "
+            "to a dedicated test database before running verify_project.py.",
+            flush=True,
+        )
+        return 1
+
     # Bind a dedicated lock port for the duration: prevents two builds writing
     # the same .next-verify concurrently, without files that need deleting.
     lock = socket.socket()
@@ -76,7 +93,7 @@ def main() -> int:
         frontend_port = free_port()
     env.update({
         "ARK_ACCEPTANCE": "1", "ARK_VERIFY": "1", "ARK_ARTIFACT_DIR": str(artifacts),
-        "ARK_BACKEND_PORT": str(backend_port), "DB_PATH": str(artifacts / "acceptance.db"),
+        "ARK_BACKEND_PORT": str(backend_port), "DATABASE_URL": db_url,
         "APP_ENV": "dev", "JWT_SECRET": secrets.token_hex(32),
         "LLM_API_KEY": "", "ZHIPU_API_KEY": "", "MIMO_API_KEY": "", "ADMIN_INVITE_CODE": "",
         "NEXT_PUBLIC_API_BASE": "", "API_UPSTREAM": f"http://127.0.0.1:{backend_port}",

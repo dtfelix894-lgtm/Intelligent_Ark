@@ -24,7 +24,6 @@ from database import (
     init_db,
     purge_demo_users,
     IntegrityError,
-    integrity_errors,
     verify_user,
     get_or_create_user,
     get_admin_profile,
@@ -141,14 +140,22 @@ else:
 
 @app.on_event("startup")
 def startup():
+    from db import check_connection
+
+    check_connection()
     init_db()
-    # 不再注入演示账号；启动时清理 is_demo=1（及历史学生种子 001）
     result = purge_demo_users()
     if result.get("deleted_users"):
         logger.info("purged demo users: %s", result.get("accounts"))
-    # SEED_DEMO_USERS 已废弃；若仍配置则告警，避免误以为还会 seed
     if os.getenv("SEED_DEMO_USERS", "").strip():
         logger.warning("SEED_DEMO_USERS is deprecated and ignored; demo seeding is disabled")
+
+
+@app.on_event("shutdown")
+def shutdown():
+    from db import close_pool
+
+    close_pool()
 
 
 
@@ -156,7 +163,7 @@ def startup():
 
 @app.get("/")
 async def root():
-    return {"message": "智伴方舟 API 服务运行中", "version": "1.0.0"}
+    return {"message": "智伴方舟服务运行中", "version": "1.0.0"}
 
 
 @app.get("/health")
@@ -223,7 +230,7 @@ async def c_login(req: CLoginRequest, response: Response):
     if not user:
         raise HTTPException(status_code=401, detail="账号或密码错误")
     if user["role"] != "student":
-        raise HTTPException(status_code=403, detail="请使用 B 端入口登录")
+        raise HTTPException(status_code=403, detail="请使用管理端登录页登录")
 
     token = create_access_token(user["id"], user["account"], user["role"])
     response.set_cookie(
@@ -456,7 +463,7 @@ async def chat_stream(
     scenario = _scenario_ok(request.scenario)
     uid = current_user["id"]
     if request.dev_override and not is_dev_env():
-        raise HTTPException(status_code=403, detail="dev_override 已在生产环境中禁用")
+        raise HTTPException(status_code=403, detail="该调试功能不可用")
 
     # 1. 先持久化用户消息（这样即使 LLM 失败，用户的话也不丢）
     try:
@@ -468,7 +475,7 @@ async def chat_stream(
     # 2. dev_override：仅 dev 环境开放
     if request.dev_override and request.dev_override != "normal":
         if not is_dev_env():
-            raise HTTPException(status_code=403, detail="dev_override 已在生产环境中禁用")
+            raise HTTPException(status_code=403, detail="该调试功能不可用")
         if request.dev_override == "yellow_alert":
             scene = YELLOW_ALERT_SCENE_UNIVERSITY
         elif request.dev_override == "red_alert":
@@ -476,7 +483,7 @@ async def chat_stream(
         elif request.dev_override == "normal":
             pass  # normal 不走 dev_override，正常调用 LLM
         else:
-            raise HTTPException(status_code=400, detail="未知的 dev_override 值")
+            raise HTTPException(status_code=400, detail="无效的调试参数")
 
         reply = scene["reply"]
         ra = dict(scene["risk_assessment"])
@@ -557,7 +564,7 @@ async def chat_stream_sse(
     scenario = _scenario_ok(request.scenario)
     uid = current_user["id"]
     if request.dev_override and not is_dev_env():
-        raise HTTPException(status_code=403, detail="dev_override 已在生产环境中禁用")
+        raise HTTPException(status_code=403, detail="该调试功能不可用")
 
     try:
         save_chat_message(uid, scenario, "user", request.message)
@@ -569,7 +576,7 @@ async def chat_stream_sse(
     dev_scene = None
     if request.dev_override:
         if not is_dev_env():
-            raise HTTPException(status_code=403, detail="dev_override 已在生产环境中禁用")
+            raise HTTPException(status_code=403, detail="该调试功能不可用")
         if request.dev_override == "yellow_alert":
             dev_scene = YELLOW_ALERT_SCENE_UNIVERSITY
         elif request.dev_override == "red_alert":
@@ -577,7 +584,7 @@ async def chat_stream_sse(
         elif request.dev_override == "normal":
             dev_scene = None
         else:
-            raise HTTPException(status_code=400, detail="未知的 dev_override 值")
+            raise HTTPException(status_code=400, detail="无效的调试参数")
 
     full_recent = get_recent_chat_history(uid, scenario, limit=CHAT_HISTORY_WINDOW + 1)
     history = full_recent[:-1] if full_recent else []
@@ -659,7 +666,7 @@ async def asr_transcribe(
         )
     except RuntimeError as exc:
         logger.warning("ASR 失败 user=%s: %s", user.get("id"), exc)
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail="语音服务暂时不可用，请稍后重试")
     return {"text": text}
 
 
@@ -682,7 +689,7 @@ async def tts_synthesize(
         audio = await synthesize_speech(text, scenario=req.scenario)
     except RuntimeError as exc:
         logger.warning("TTS 失败 user=%s: %s", user.get("id"), exc)
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail="语音服务暂时不可用，请稍后重试")
     return Response(
         content=audio,
         media_type="audio/wav",
@@ -925,7 +932,7 @@ async def admin_alert_assign(
     target = (req.assignee or "").strip()
     reason = (req.reason or "").strip()
     if not target:
-        raise HTTPException(status_code=422, detail="assignee 不能为空")
+        raise HTTPException(status_code=422, detail="负责人工号不能为空")
     if not reason:
         raise HTTPException(status_code=422, detail="改派原因不能为空")
     if get_admin_account(target) is None:
@@ -1104,7 +1111,7 @@ async def admin_alert_create_reassessment(
     if status == "illegal":
         raise HTTPException(status_code=409, detail="当前状态不可创建复评")
     if status == "bad_input":
-        raise HTTPException(status_code=422, detail="due_date 须为 YYYY-MM-DD")
+        raise HTTPException(status_code=422, detail="请填写正确格式的复评日期（年-月-日）")
     write_audit_log(
         actor=actor,
         action="create_reassessment",
@@ -1130,7 +1137,7 @@ async def admin_reassessment_complete(
     if status == "done":
         raise HTTPException(status_code=409, detail="该复评已完成")
     if status == "bad_input":
-        raise HTTPException(status_code=422, detail="result 须为 improved 或 still_risk")
+        raise HTTPException(status_code=422, detail="请选择「好转」或「仍有风险」")
     write_audit_log(
         actor=actor,
         action="complete_reassessment",
@@ -1453,10 +1460,7 @@ def get_help_resources() -> dict:
     missing_hint = None
     if not configured:
         missing_hint = (
-            "开发提示：尚未配置 SCHOOL_PSYCH_CENTER_PHONE / HOTLINE_24H_PHONE / APPOINTMENT_URL，"
-            "请在 backend/.env 填写本校求助资源（见 ADM-02）。"
-            if is_dev_env()
-            else None
+            "本校求助电话与预约入口尚未完善，请联系学校心理中心、辅导员或身边可信任的人。"
         )
 
     return {

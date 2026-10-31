@@ -3,7 +3,7 @@
 import { Settings2 } from "lucide-react";
 
 export type ConfigSummary = {
-  claim_timeouts: { red_minutes: number; yellow_minutes: number; app_env: string };
+  claim_timeouts: { red_minutes: number; yellow_minutes: number };
   reassess_interval_days: number[];
   psych_center: { label: string; phone?: string | null };
   hotline: { label: string; phone?: string | null };
@@ -26,13 +26,13 @@ export function ConfigSummaryCard({ data, loading }: Props) {
         </span>
         <div className="min-w-0 flex-1">
           <h2 id="config-summary-title" className="text-sm font-bold">
-            配置摘要（只读）
+            学校求助与时限
           </h2>
-          <p className="mt-1 text-xs text-muted-foreground">来自环境变量；本页只读。号码与时限请由学校心理中心维护。</p>
+          <p className="mt-1 text-xs text-muted-foreground">以下为当前生效的求助电话与认领时限，仅供工作台查看。</p>
           {loading && !data ? (
-            <p className="mt-3 text-sm text-muted-foreground">加载配置中…</p>
+            <p className="mt-3 text-sm text-muted-foreground">正在加载…</p>
           ) : !data ? (
-            <p className="mt-3 text-sm text-muted-foreground">配置暂不可用</p>
+            <p className="mt-3 text-sm text-muted-foreground">暂无法显示，请稍后重试</p>
           ) : (
             <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
               <div>

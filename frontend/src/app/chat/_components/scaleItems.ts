@@ -1,4 +1,4 @@
-/** 标准中文版条目与分档（学生自测；结果仅本人本机可见）。文案须含「这不是诊断」。 */
+/** 标准中文版条目与分档（学生自测）。 */
 
 export type LikertOption = { value: 0 | 1 | 2 | 3; label: string };
 
@@ -12,7 +12,7 @@ export const LIKERT_OPTIONS: LikertOption[] = [
 export type ScaleItem = { id: string; text: string; /** PHQ-9 第 9 题 */ critical?: boolean };
 
 export const PHQ9_INTRO =
-  "在过去两周内，你有多经常被以下问题所困扰？请按实际情况选择。这不是诊断，结果仅供自我了解与求助参考。";
+  "在过去两周内，你有多经常被以下问题所困扰？请按实际情况选择。";
 
 export const PHQ9_ITEMS: ScaleItem[] = [
   { id: "phq1", text: "做事时提不起劲或没有乐趣" },
@@ -27,7 +27,7 @@ export const PHQ9_ITEMS: ScaleItem[] = [
 ];
 
 export const GAD7_INTRO =
-  "在过去两周内，你有多经常被以下问题所困扰？请按实际情况选择。这不是诊断，结果仅供自我了解与求助参考。";
+  "在过去两周内，你有多经常被以下问题所困扰？请按实际情况选择。";
 
 export const GAD7_ITEMS: ScaleItem[] = [
   { id: "gad1", text: "感觉紧张、焦虑或急切" },
@@ -60,5 +60,6 @@ export function bandFor(score: number, bands: Band[]): Band {
   return bands.find((b) => score >= b.min && score <= b.max) || bands[bands.length - 1];
 }
 
-export const NON_DIAGNOSIS_DISCLAIMER =
-  "这不是诊断。本自测不能代替专业评估，也不提供治疗或用药建议。若困扰持续或加重，请联系学校心理中心、辅导员或身边可信任的人。";
+/** 自测页统一求助提示（避免重复技术/免责话术）。 */
+export const SCALE_HELP_HINT =
+  "若困扰持续或加重，请联系学校心理中心、辅导员或身边可信任的人。";

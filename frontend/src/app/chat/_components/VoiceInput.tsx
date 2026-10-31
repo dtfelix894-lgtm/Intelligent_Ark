@@ -148,7 +148,7 @@ export function VoiceInput({ disabled, onTranscript, onFeedback }: Props) {
       return;
     }
     if (!window.isSecureContext && window.location.hostname !== "localhost") {
-      onFeedback({ kind: "error", message: "浏览器只允许在 HTTPS 页面使用麦克风，请先配置 HTTPS。" });
+      onFeedback({ kind: "error", message: "请在安全连接（https）下使用语音输入。" });
       return;
     }
 

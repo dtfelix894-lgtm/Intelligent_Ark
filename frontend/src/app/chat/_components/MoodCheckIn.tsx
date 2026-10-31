@@ -180,9 +180,6 @@ export function MoodCheckIn() {
             );
           })}
         </div>
-        <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
-          仅保存在本机浏览器（localStorage），不上传；用于自我觉察，不作诊断。
-        </p>
       </div>
     </section>
   );

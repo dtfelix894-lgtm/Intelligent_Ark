@@ -27,10 +27,11 @@ Intelligent_Ark/
 │   ├── asr_service.py      # 智谱 GLM-ASR-2512 语音转写
 │   ├── tts_service.py      # 小米 MiMo 语音合成（需配置 MIMO_API_KEY）
 │   ├── auth.py             # JWT 鉴权（签发/验证/角色守卫）
-│   ├── database.py         # SQLite CRUD（users/chat_messages/risk_events）
+│   ├── database.py         # PostgreSQL CRUD（users/chat_messages/risk_events）
+│   ├── db.py               # 连接池与 SQL 方言适配
 │   ├── schemas.py          # 对话与风险 Pydantic Schema（登录注册模型在 main.py）
 │   ├── requirements.txt
-│   ├── test_release.py     # 上线前回归测试（使用临时数据库）
+│   ├── test_release.py     # 上线前回归测试（需 TEST_DATABASE_URL）
 │   └── .env                # 环境变量配置
 │
 ├── frontend/
@@ -180,8 +181,8 @@ DAILY_QUOTE_API_URL=https://v1.hitokoto.cn/  # 每日治愈语来源；失败时
 # ── 账号与数据 ─────────────────────────────────────────────
 ADMIN_INVITE_CODE=                     # 管理员注册邀请码，留空则注册接口返回 403
 SEED_DEMO_USERS=0                      # 设为 1 时启动注入演示账号 001 / G001
-# DB_PATH=/absolute/path/intelligent_ark.db
-# 不设置 DB_PATH 才使用 backend/intelligent_ark.db；不要显式设为空字符串
+DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/intelligent_ark
+# Vercel 可改用集成提供的 POSTGRES_URL；测试可用 TEST_DATABASE_URL 指向独立库
 
 # ── 安全配置 ───────────────────────────────────────────────
 APP_ENV=dev                            # dev | prod（prod 禁用 dev_override，Cookie 加 secure）

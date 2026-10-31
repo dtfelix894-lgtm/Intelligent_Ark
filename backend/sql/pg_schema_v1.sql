@@ -1,6 +1,6 @@
 -- pg_schema_v1.sql
 -- Intelligent_Ark PostgreSQL target schema (v1)
--- Matches PDRs/DB_PostgreSQL_Design.md §2.3
+-- Source of truth for production schema (applied by database.init_db)
 -- Idiomatic: CREATE TABLE/INDEX IF NOT EXISTS (safe re-run on empty/partial installs)
 -- Encoding: UTF-8
 -- Do NOT run DROP; does not delete data.
@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS risk_events (
     note                  TEXT,
     assignee              TEXT,
     claimed_at            TIMESTAMPTZ,
-    status                TEXT        CHECK (status IS NULL OR status IN ('pending', 'claimed', 'closed')),
+    status                TEXT        CHECK (status IS NULL OR status IN (
+        'pending', 'claimed', 'verifying', 'intervening', 'referred', 'monitoring', 'closed', ''
+    )),
     closed_at             TIMESTAMPTZ,
     closure_label         TEXT,
     closure_other_person  BOOLEAN     NOT NULL DEFAULT FALSE,

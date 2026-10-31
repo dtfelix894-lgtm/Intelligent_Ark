@@ -15,7 +15,7 @@ cd frontend && npm install && npm run dev
 
 ## 技术架构
 
-- 后端：Python 3.12、FastAPI、SQLite WAL、JWT HS256、bcrypt。
+- 后端：Python 3.12、FastAPI、PostgreSQL（`DATABASE_URL`）、JWT HS256、bcrypt。
 - 前端：Next.js 15 App Router、React 18、TypeScript、Tailwind、Shadcn UI。
 - AI：对话走 OpenAI 兼容的 `LLM_*`；未配置密钥时使用高校心理关键词兜底。ASR 走智谱 `ZHIPU_*`；TTS 端点为小米 MiMo `MIMO_*`（未配置时 `/api/tts` 恒 502），前端未接入。
 - 数据表：`users`、`user_profiles`、`chat_messages`、`risk_events`。时间口径：所有 `created_at`/`handled_at` 以北京时间墙钟时间存储（`datetime('now','+8 hours')`），趋势统计按北京时间自然日，不依赖服务器时区。

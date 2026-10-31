@@ -1,21 +1,16 @@
 """
-数据库模块：SQLite / PostgreSQL + bcrypt 鉴权
+数据库模块：PostgreSQL + bcrypt 鉴权
 
-连接由 db.py 适配：DATABASE_URL(postgresql) 优先，否则 DB_PATH(SQLite)。
+连接由 db.py 提供（DATABASE_URL / Vercel POSTGRES_URL）。
 """
 import os
 import bcrypt
-from pathlib import Path
 from typing import Optional
 import threading
 import queue
 
 from db import (
-    BASE_DIR,
-    DB_PATH,
-    DATABASE_URL,
     get_conn,
-    using_postgres,
     sql_now,
     sql_today,
     sql_now_plus_minutes,
@@ -27,168 +22,51 @@ from db import (
     json_param,
     format_ts_for_api,
     init_postgres_schema,
-    integrity_errors,
     IntegrityError,
-    backend_label,
 )
 
 # ─── 建表 ─────────────────────────────────────────────────────────────────────
 
+def _refresh_risk_status_check(conn) -> None:
+    """Align PG check constraint with workflow statuses (idempotent on existing DBs)."""
+    allowed = (
+        "pending", "claimed", "verifying", "intervening",
+        "referred", "monitoring", "closed", "",
+    )
+    in_list = ", ".join(f"'{s}'" for s in allowed)
+    conn.execute("ALTER TABLE risk_events DROP CONSTRAINT IF EXISTS risk_events_status_check")
+    conn.execute(
+        f"ALTER TABLE risk_events ADD CONSTRAINT risk_events_status_check "
+        f"CHECK (status IS NULL OR status IN ({in_list}))"
+    )
+
+
 def init_db():
-    """Create schema. PG loads sql/pg_schema_v1.sql; SQLite keeps CREATE/ALTER path."""
-    if using_postgres():
-        with get_conn() as conn:
-            init_postgres_schema(conn)
-            try:
-                conn.execute(
-                    "UPDATE risk_events SET status = 'closed', "
-                    "closure_label = COALESCE(NULLIF(closure_label, ''), 'legacy_unlabeled'), "
-                    "closed_at = COALESCE(closed_at, handled_at) "
-                    "WHERE handled IS TRUE AND (status IS NULL OR status = '' OR status = 'pending' OR status = 'claimed')"
-                )
-                conn.execute(
-                    "UPDATE risk_events SET status = 'claimed' "
-                    "WHERE handled IS FALSE AND assignee IS NOT NULL AND assignee != '' "
-                    "AND (status IS NULL OR status = '' OR status = 'pending')"
-                )
-                conn.execute(
-                    "UPDATE risk_events SET status = 'pending' "
-                    "WHERE (status IS NULL OR status = '') AND handled IS FALSE"
-                )
-            except Exception:
-                pass
-        return
-
+    """Create schema from sql/pg_schema_v1.sql and apply legacy status backfills."""
     with get_conn() as conn:
-        now = sql_now()
-        conn.executescript(f"""
-        CREATE TABLE IF NOT EXISTS users (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            account     TEXT    NOT NULL UNIQUE,
-            password_hash TEXT  NOT NULL,
-            role        TEXT    NOT NULL DEFAULT 'student',
-            is_demo     INTEGER NOT NULL DEFAULT 0,
-            created_at  TEXT    NOT NULL DEFAULT ({now})
-        );
-        CREATE TABLE IF NOT EXISTS user_profiles (
-            user_id     INTEGER PRIMARY KEY REFERENCES users(id),
-            school      TEXT,
-            student_id  TEXT,
-            education   TEXT,
-            qq_email    TEXT,
-            admin_type  TEXT,
-            school_name TEXT
-        );
-        CREATE TABLE IF NOT EXISTS chat_messages (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER NOT NULL REFERENCES users(id),
-            scenario    TEXT    NOT NULL,
-            role        TEXT    NOT NULL,
-            content     TEXT    NOT NULL,
-            created_at  TEXT    NOT NULL DEFAULT ({now})
-        );
-        CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id, created_at);
-
-        CREATE TABLE IF NOT EXISTS risk_events (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER NOT NULL REFERENCES users(id),
-            scenario    TEXT    NOT NULL,
-            level       TEXT    NOT NULL,
-            score       INTEGER NOT NULL,
-            tags        TEXT    NOT NULL,
-            summary     TEXT    NOT NULL,
-            handled     INTEGER NOT NULL DEFAULT 0,
-            created_at  TEXT    NOT NULL DEFAULT ({now})
-        );
-        CREATE INDEX IF NOT EXISTS idx_risk_events_level ON risk_events(level, created_at);
-        """)
-        import sqlite3 as _sqlite3
-        for col in (
-            "ALTER TABLE user_profiles ADD COLUMN admin_type TEXT",
-            "ALTER TABLE user_profiles ADD COLUMN school_name TEXT",
-            "ALTER TABLE user_profiles ADD COLUMN companion_persona TEXT",
-            "ALTER TABLE users ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE risk_events ADD COLUMN handled_at TEXT",
-            "ALTER TABLE risk_events ADD COLUMN handled_by TEXT",
-            "ALTER TABLE risk_events ADD COLUMN action TEXT",
-            "ALTER TABLE risk_events ADD COLUMN note TEXT",
-            "ALTER TABLE risk_events ADD COLUMN assignee TEXT",
-            "ALTER TABLE risk_events ADD COLUMN claimed_at TEXT",
-            "ALTER TABLE risk_events ADD COLUMN status TEXT",
-            "ALTER TABLE risk_events ADD COLUMN closed_at TEXT",
-            "ALTER TABLE risk_events ADD COLUMN closure_label TEXT",
-            "ALTER TABLE risk_events ADD COLUMN closure_other_person INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE risk_events ADD COLUMN closure_note TEXT",
-            "ALTER TABLE risk_events ADD COLUMN claim_due_at TEXT",
-            "ALTER TABLE risk_events ADD COLUMN escalated_at TEXT",
-        ):
-            try:
-                conn.execute(col)
-            except _sqlite3.OperationalError:
-                pass
+        init_postgres_schema(conn)
+        try:
+            _refresh_risk_status_check(conn)
+        except Exception:
+            pass
         try:
             conn.execute(
                 "UPDATE risk_events SET status = 'closed', "
                 "closure_label = COALESCE(NULLIF(closure_label, ''), 'legacy_unlabeled'), "
                 "closed_at = COALESCE(closed_at, handled_at) "
-                "WHERE " + _sql_bool_eq("handled", True) + " AND (status IS NULL OR status = '' OR status = 'pending' OR status = 'claimed')"
+                "WHERE handled IS TRUE AND (status IS NULL OR status = '' OR status = 'pending' OR status = 'claimed')"
             )
             conn.execute(
                 "UPDATE risk_events SET status = 'claimed' "
-                "WHERE " + _sql_bool_eq("handled", False) + " AND assignee IS NOT NULL AND assignee != '' "
+                "WHERE handled IS FALSE AND assignee IS NOT NULL AND assignee != '' "
                 "AND (status IS NULL OR status = '' OR status = 'pending')"
             )
             conn.execute(
                 "UPDATE risk_events SET status = 'pending' "
-                "WHERE (status IS NULL OR status = '') AND " + _sql_bool_eq("handled", False)
+                "WHERE (status IS NULL OR status = '') AND handled IS FALSE"
             )
-        except _sqlite3.OperationalError:
+        except Exception:
             pass
-        conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS event_transitions (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id    INTEGER NOT NULL REFERENCES risk_events(id),
-            from_status TEXT    NOT NULL,
-            to_status   TEXT    NOT NULL,
-            actor       TEXT    NOT NULL,
-            reason      TEXT,
-            created_at  TEXT    NOT NULL DEFAULT ({now})
-        )
-        """)
-        conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS follow_up_records (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id        INTEGER NOT NULL REFERENCES risk_events(id),
-            type            TEXT    NOT NULL,
-            occurred_at     TEXT    NOT NULL,
-            summary         TEXT    NOT NULL,
-            referral_target TEXT,
-            actor           TEXT    NOT NULL,
-            created_at      TEXT    NOT NULL DEFAULT ({now})
-        )
-        """)
-        conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS reassessments (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id     INTEGER NOT NULL REFERENCES risk_events(id),
-            due_date     TEXT    NOT NULL,
-            completed_at TEXT,
-            result       TEXT,
-            actor        TEXT,
-            created_at   TEXT    NOT NULL DEFAULT ({now})
-        )
-        """)
-        conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            actor       TEXT    NOT NULL,
-            action      TEXT    NOT NULL,
-            target_type TEXT    NOT NULL,
-            target_id   TEXT    NOT NULL,
-            meta        TEXT,
-            created_at  TEXT    NOT NULL DEFAULT ({now})
-        )
-        """)
 
 
 def hash_password(plain: str) -> str:
@@ -999,7 +877,7 @@ def transition_risk_event(
                 "handled_at = COALESCE(handled_at, " + sql_now() + "), "
                 "handled_by = COALESCE(handled_by, ?) "
                 "WHERE id = ? AND scenario = 'university'",
-                (label, 1 if closure_other_person else 0, note, actor, event_id),
+                (label, bool(closure_other_person), note, actor, event_id),
             )
             if label == "confirmed":
                 _schedule_reassessments(conn, event_id)
@@ -1324,7 +1202,7 @@ def _parse_ts(value):
 
 def _now_local():
     from datetime import datetime, timedelta, timezone
-    # Mirror wall clock used in SQLite TEXT path; PG stores UTC but API normalizes to +8 wall.
+    # PG stores UTC; API normalizes to Asia/Taipei wall clock strings.
     return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=8)
 
 
@@ -1677,8 +1555,12 @@ def get_admin_config_summary() -> dict:
         intervals = [14, 30]
     if not intervals:
         intervals = [14, 30]
+    public_timeouts = {
+        "red_minutes": timeouts["red_minutes"],
+        "yellow_minutes": timeouts["yellow_minutes"],
+    }
     return {
-        "claim_timeouts": timeouts,
+        "claim_timeouts": public_timeouts,
         "reassess_interval_days": intervals,
         "psych_center": {
             "label": (os.getenv("SCHOOL_PSYCH_CENTER_LABEL") or "学校心理中心").strip(),
@@ -1693,7 +1575,6 @@ def get_admin_config_summary() -> dict:
             "url": (os.getenv("APPOINTMENT_URL") or "").strip() or None,
         },
         "is_placeholder": (os.getenv("HELP_RESOURCES_IS_PLACEHOLDER") or "0").strip() in ("1", "true", "True", "yes"),
-        "source": "environment",
         "editable": False,
     }
 
@@ -1707,53 +1588,37 @@ def get_admin_config_summary() -> dict:
 
 
 def _sql_local_date(column: str) -> str:
-    """Calendar date in Asia/Taipei for PG timestamptz; SQLite TEXT wall clock date()."""
-    from db import using_postgres
-    if using_postgres():
-        return f"(({column} AT TIME ZONE 'Asia/Taipei')::date)"
-    return f"date({column})"
+    return f"(({column} AT TIME ZONE 'Asia/Taipei')::date)"
 
 
 def _sql_ts_present(column: str) -> str:
-    """Non-null timestamp predicate (SQLite historically also rejected empty string)."""
-    from db import using_postgres
-    if using_postgres():
-        return f"{column} IS NOT NULL"
-    return f"{column} IS NOT NULL AND {column} != ''"
+    return f"{column} IS NOT NULL"
+
 
 def _sql_bool(value: bool) -> str:
-    """Literal true/false compatible with Postgres BOOLEAN and SQLite INTEGER."""
-    from db import using_postgres
-    if using_postgres():
-        return "TRUE" if value else "FALSE"
-    return "1" if value else "0"
+    return "TRUE" if value else "FALSE"
 
 
 def _sql_bool_eq(column: str, value: bool) -> str:
     return f"{column} = {_sql_bool(value)}"
 
+
 def _sql_is_demo_true() -> str:
-    """Postgres boolean vs SQLite integer affinity."""
-    from db import using_postgres
-    return "COALESCE(is_demo, FALSE) IS TRUE" if using_postgres() else "COALESCE(is_demo, 0) = 1"
+    return "COALESCE(is_demo, FALSE) IS TRUE"
 
 
 def _sql_is_demo_false(alias: str = "") -> str:
-    from db import using_postgres
     if not alias:
         col = "is_demo"
     elif alias.endswith("."):
         col = f"{alias}is_demo"
     else:
         col = f"{alias}.is_demo"
-    if using_postgres():
-        return f"COALESCE({col}, FALSE) IS NOT TRUE"
-    return f"COALESCE({col}, 0) = 0"
+    return f"COALESCE({col}, FALSE) IS NOT TRUE"
 
 
 def _sql_set_is_demo_true() -> str:
-    from db import using_postgres
-    return "TRUE" if using_postgres() else "1"
+    return "TRUE"
 
 def purge_demo_users() -> dict:
     """启动时清理演示账号及其专属关联数据。

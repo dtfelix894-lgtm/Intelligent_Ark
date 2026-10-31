@@ -348,7 +348,7 @@ export function EventDetailPanel({
             <h2 id="event-detail-title" className="mt-1 text-lg font-bold">
               {item ? `事件 #${item.id}` : eventId != null ? `事件 #${eventId}` : "事件详情"}
             </h2>
-            <p className="mt-1 text-xs text-muted-foreground">不展示学生消息原文（ADR 0002）。打开已写审计。</p>
+            <p className="mt-1 text-xs text-muted-foreground">此处仅展示脱敏摘要，不含学生聊天原文；相关操作会记入操作记录。</p>
           </div>
           <button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-xl border border-border hover:bg-secondary" aria-label="关闭">
             <X className="h-4 w-4" />

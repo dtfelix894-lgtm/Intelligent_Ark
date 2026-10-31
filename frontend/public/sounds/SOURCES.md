@@ -9,7 +9,8 @@
 | meditation.mp3 | 入睡轻垫（可选） | 项目既有冥想垫底素材；正念主流程改为呼吸引导，不再仅当环境音按钮 |
 | health.mp3 | 未纳入曲库 | 仅 13s 短句，来源不明，暂不引用 |
 | jingju.mp3 / pingshu.mp3 | 未纳入曲库 | 京剧/评书录音，商业版权风险高 |
-| lemon-tree.mp3 / medal.mp3 | 已从电台移除 | 商业流行曲（《Lemon Tree》《勋章》），版权风险 |
+| lemon-tree.mp3 | 能量补给电台 · 放松 | 《Lemon Tree》；完整曲目，不循环 |
+| medal.mp3 | 能量补给电台 · 提神 | 《勋章》；完整曲目，不循环 |
 | rain.mp3.orig.bak | 原大文件备份 | 原 ~17MB rain.mp3，已停用；确认无需求后可删 |
 
 
@@ -19,8 +20,6 @@
 
 | 文件 | 状态 | 原因 |
 |------|------|------|
-| lemon-tree.mp3 | 废弃 | 商业流行曲《Lemon Tree》 |
-| medal.mp3 | 废弃 | 商业流行曲《勋章》 |
 | jingju.mp3 | 废弃候选 | 京剧录音，版权风险 |
 | pingshu.mp3 | 废弃候选 | 评书录音，版权风险 |
 | health.mp3 | 暂不引用 | 来源不明短句 |

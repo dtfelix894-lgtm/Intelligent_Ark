@@ -14,14 +14,14 @@
 | Python | https://www.python.org/downloads/ | 使用 Python 3.12 系列，与开发环境一致 |
 | Node.js | https://nodejs.org/en/download | 使用受支持的 LTS，构建和运行保持同一版本 |
 
-本地使用 Windows Terminal 的 ssh/scp 即可连接和上传，不需要额外数据库客户端。SQLite 随 Python 提供，不必安装 MySQL、Tomcat 或 JDK。
+本地使用 Windows Terminal 的 ssh/scp 即可连接和上传。生产需 PostgreSQL（本机或托管）；不必安装 Tomcat 或 JDK。
 
 ## 顺序
 
 1. 准备 Linux 主机；小规模单校试用可先按 2 核 4 GB 估算，Next 构建内存与真实并发需实测。该估算不是容量承诺。
 2. 安全组开放网站 80/443；SSH 与宝塔管理端口只允许管理来源。后端与 Next 只监听回环地址。
 3. 安装宝塔和 Nginx；通过面板 Python/Node 管理工具选择运行时。不要同时由面板和 systemd 重复启动同一服务。
-4. 上传源码到 /www/wwwroot/intelligent-ark；数据独立放在 /www/ark-data。目录授权给实际运行账户；SQLite 的父目录也必须可写，WAL 文件在同目录创建。
+4. 上传源码到 /www/wwwroot/intelligent-ark；PostgreSQL 独立安装或使用托管实例，在 backend.env 中配置 `DATABASE_URL`。
 5. 配置后端环境变量，参考同目录的 backend.env.example。JWT_SECRET 使用 python -c "import secrets; print(secrets.token_hex(32))" 生成，密钥只写服务器。填写现有模型账户实际支持的 LLM_MODEL；没有密钥时只能验证关键词兜底，不能称为真实模型已验收。
 
 在服务器项目目录执行：
@@ -54,21 +54,19 @@ NEXT_PUBLIC_API_BASE 保持未设置，浏览器默认请求同源 /api。next.c
 
 ## 数据库与发布回退
 
-维持当前单机 SQLite，不新增数据库产品或多租户功能。一个后端实例、一个本地持久化文件；不把 SQLite 放在不保证锁语义的网络共享盘。备份采用 Python sqlite3 的 backup API 或停服务后完整备份，不要在 WAL 活跃时只复制主 db 文件。备份文件单独存放并限制访问。更新源码时不覆盖 DB_PATH 与服务器密钥；保留上一个代码发布目录，失败时切回代码和依赖并重启，涉及数据迁移则先单独评估恢复方案。
+应用仅支持 PostgreSQL（`DATABASE_URL`）。单校部署仍是一个后端实例连一个库；备份使用 `pg_dump` 或托管快照，备份文件单独存放并限制访问。更新源码时不覆盖 `DATABASE_URL` 与服务器密钥；保留上一个代码发布目录，失败时切回代码和依赖并重启。
 
 ## 验证与当前边界
 
-backend/test_release.py 使用临时数据库验证登录、风险消息落库、管理处置、旧管理员 Token 拒绝、生产调试参数无写入和退出 Cookie 清除。运行：cd backend 后 python -m unittest test_release。临时数据库保留用于检查，不改正式数据。
+backend/test_release.py 在 `TEST_DATABASE_URL` 或 `DATABASE_URL` 指向的 Postgres 上清空表后验证登录、风险消息落库等。运行：cd backend 后 python -m unittest test_release。请使用独立测试库，避免污染生产数据。
 
 上线验收还需要在实际域名上核对证书、网络防火墙、模型账户、备份恢复。当前权限是单校角色模型，不具备多高校租户隔离；不要作为多校共享 SaaS 发布。现有风险判定为纯关键词匹配（红：自杀/轻生/不想活/结束生命/自残；黄：失眠/睡不着/焦虑/崩溃/压力很大/抑郁/绝望），不含关键词的委婉危机表达会被判为绿色，上线前需评估是否可接受；SSE 当前是生成完整回复后按 12 字符分段发送；本轮不扩展算法或业务能力。
 
 
-## 数据库（SQLite → PostgreSQL 过渡）
+## 数据库（PostgreSQL）
 
-- 默认仍用 SQLite：不设 `DATABASE_URL` 时走 `DB_PATH`（与现网一致）。
-- 切换 Postgres：设置 `DATABASE_URL=postgresql://ark_app:…@127.0.0.1:5432/intelligent_ark`，并 `pip install -r requirements.txt`（含 `psycopg[binary,pool]`）。
-- 启动时 `init_db()` 在 PG 上加载 `backend/sql/pg_schema_v1.sql`（与 Ark 数据库同事脚本一致，勿另起 DDL）。
-- 数据迁移：`python backend/scripts/migrate_sqlite_to_pg.py --sqlite-only-check`（无需密码）；正式迁移等密码到位后设 `DATABASE_URL` 再跑（见脚本头部说明）。
-- 时间策略：PG 存 `TIMESTAMPTZ` UTC；API 对外仍输出 Asia/Taipei 墙钟字符串，避免前端字段漂移。
-- 密码未到前不要强行连 PG；URL 含占位密码会清晰报错，清空 `DATABASE_URL` 即可回退 SQLite。
+- 必填 `DATABASE_URL=postgresql://ark_app:…@127.0.0.1:5432/intelligent_ark`（Vercel 集成可改用 `POSTGRES_URL`）。
+- `pip install -r requirements.txt`（含 `psycopg[binary,pool]`）；启动时 `init_db()` 加载 `backend/sql/pg_schema_v1.sql`。
+- 时间策略：PG 存 `TIMESTAMPTZ` UTC；API 对外仍输出 Asia/Taipei 墙钟字符串。
+- Vercel：`vercel.json` 将 `/api` 路由到 FastAPI 服务；设置集成 Postgres 环境变量与 `JWT_SECRET` 等密钥。
 

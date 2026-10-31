@@ -140,11 +140,11 @@ export function UserSettings({ mode, school, account, studentId, onLogout, logou
       <DialogContent className="max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg overflow-y-auto rounded-2xl p-0">
         <DialogHeader className="border-b border-border px-6 py-5 pr-14 text-left">
           <DialogTitle>{isAdmin ? "账户与工作设置" : "账户与隐私设置"}</DialogTitle>
-          <DialogDescription>{isAdmin ? "查看工作身份并调整高校心理预警工作台。" : "查看学生身份，以及本机隐私与安全相关说明。"}</DialogDescription>
+          <DialogDescription>{isAdmin ? "查看工作身份并调整高校心理预警工作台。" : "查看学生身份与隐私、安全相关设置。"}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 px-5 py-5 sm:px-6">
-          <p className="text-xs text-muted-foreground">偏好按当前账号保存在本浏览器，不会同步到其他设备。</p>
+          <p className="text-xs text-muted-foreground">部分偏好会随当前账号保留，便于下次继续使用。</p>
           {saveError && <p role="alert" className="text-sm text-red-700">{saveError}</p>}
           <section aria-labelledby="account-title">
             <h2 id="account-title" className="text-sm font-bold text-muted-foreground">账户信息</h2>
@@ -236,8 +236,7 @@ export function UserSettings({ mode, school, account, studentId, onLogout, logou
           <section aria-labelledby="privacy-title">
             <div className="flex items-center gap-2"><LockKeyhole className="h-4 w-4 text-violet-700" aria-hidden="true" /><h2 id="privacy-title" className="text-sm font-bold text-muted-foreground">隐私与安全</h2></div>
             <div className="mt-3 space-y-2.5">
-              <StatusRow icon={LockKeyhole} title="本机偏好" description="人设、日记与自测等偏好可保存在本浏览器，便于你下次继续使用。" status="已启用" />
-              <StatusRow icon={ShieldCheck} title="这不是诊断" description="AI 陪伴与自测仅供自我觉察，不能替代专业评估、治疗或用药建议。" status="已说明" />
+              <StatusRow icon={LockKeyhole} title="个人偏好" description="人设、日记与自测记录等会为你保留，方便下次继续。" status="已启用" />
               <StatusRow icon={ShieldCheck} title="需要时请求助" description="若感到不安全或困扰加重，请打开「帮助」，联系学校心理中心、辅导员或身边可信任的人。" status="安全提示" />
             </div>
           </section>

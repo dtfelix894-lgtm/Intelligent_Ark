@@ -55,7 +55,7 @@ export function ChatMessageList({ messages, loading, persona, identity, onOpenHe
             appointment: null,
             configured: false,
             is_placeholder: false,
-            missing_hint: "求助资源暂未配置或加载失败。请稍后在「帮助」页重试，或联系学校心理中心。",
+            missing_hint: "求助资源暂不可用。请稍后在「帮助」页查看，或联系学校心理中心。",
             trust_prompt: DEFAULT_TRUST,
           });
         }

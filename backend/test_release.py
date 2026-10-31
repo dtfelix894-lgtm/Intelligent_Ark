@@ -1,15 +1,16 @@
-"""Run with python -m unittest test_release from backend; no production DB access."""
+"""Run with python -m unittest test_release from backend; uses TEST_DATABASE_URL."""
 import asyncio
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 import httpx
 import database
 import main
 from auth import create_access_token
 from llm_service import _build_system_prompt, _fallback, _risk
+from test_support import isolated_test_database, requires_postgres
 
+
+@requires_postgres
 class ReleaseTests(unittest.TestCase):
     def test_campus_risk_levels(self):
         self.assertEqual(_risk("今天心情不错，刚和同学吃完饭").level, "green")
@@ -28,15 +29,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("停止玩梗和表情", risk_prompt)
 
     def test_existing_workflow_and_guards(self):
-        with patch.object(database, "DB_PATH", Path(tempfile.mkdtemp(prefix="ark-release-")) / "test.db"):
-            database.init_db()
-            # 自建临时管理员，不依赖演示种子账号
+        with isolated_test_database():
             database.get_or_create_user(
                 "G900",
                 "test-pass-900",
                 "admin",
                 {"admin_type": "G", "school_name": "测试大学"},
             )
+
             async def run():
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as c:
                     registration = await c.post(

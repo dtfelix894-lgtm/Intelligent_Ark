@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Phone, RefreshCw, ShieldCheck, UserRoundCheck } from "lucide-react";
+import { Loader2, Phone, RefreshCw, ShieldCheck, UserRoundCheck } from "lucide-react";
 import { apiJson } from "@/lib/api";
 import type { HelpResourcesConfig, HelpResourcePhone } from "./types";
 
@@ -12,13 +12,17 @@ function dialable(items: HelpResourcePhone[]) {
 export function HelpResources() {
   const [data, setData] = useState<HelpResourcesConfig | null>(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   async function load() {
     try {
       setError("");
+      setLoading(true);
       setData(await apiJson<HelpResourcesConfig>("/api/help-resources", { side: "c" }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "求助资源暂时无法加载");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -26,7 +30,7 @@ export function HelpResources() {
     void load();
   }, []);
 
-  if (!data && !error) {
+  if (loading && !data && !error) {
     return (
       <div className="space-y-3" aria-label="求助资源加载中">
         <div className="h-40 animate-pulse rounded-2xl border border-border bg-white/70 motion-reduce:animate-none" />
@@ -60,7 +64,22 @@ export function HelpResources() {
   ]);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" aria-busy={loading}>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => void load()}
+          disabled={loading}
+          className="inline-flex min-h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-muted disabled:opacity-50"
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          {loading ? "更新中…" : "刷新"}
+        </button>
+      </div>
       <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
         <ShieldCheck className="h-5 w-5 text-emerald-700" aria-hidden="true" />
         <h3 className="mt-3 font-semibold text-emerald-950">需要现实中的帮助？</h3>

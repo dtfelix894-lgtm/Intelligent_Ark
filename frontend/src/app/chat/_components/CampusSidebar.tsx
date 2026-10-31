@@ -1,32 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  BookOpenCheck,
-  ClipboardList,
-  ChevronRight,
-  HeartHandshake,
-  Leaf,
-  Quote,
-  RefreshCw,
-  ShieldCheck,
-  Sparkles,
-  SunMedium,
-} from "lucide-react";
+import { Quote, RefreshCw, Sparkles, SunMedium } from "lucide-react";
 import { apiJson } from "@/lib/api";
 import { buildCampusGreeting, buildCampusTimeContext, companionName } from "@/lib/campus-companion";
 import { MoodCheckIn } from "./MoodCheckIn";
 import type { CampusContext, CompanionPersona, CampusTermPhase } from "./types";
-
-type ToolsTab = "relax" | "release" | "help" | "assess";
 
 type Props = {
   persona?: CompanionPersona;
   school?: string;
   account?: string;
   studentId?: string;
-  /** 打开右侧自助工具并切到指定页（桌面栏 / 移动抽屉由父级处理） */
-  onOpenTools?: (tab?: ToolsTab) => void;
 };
 
 const PHASE_META: Record<CampusTermPhase, { chip: string; tip: string }> = {
@@ -73,54 +58,11 @@ function initials(label: string) {
   return /[a-z]/i.test(ch) ? ch.toUpperCase() : ch;
 }
 
-const SHORTCUTS: {
-  tab: ToolsTab;
-  label: string;
-  hint: string;
-  icon: typeof Leaf;
-  tile: string;
-  ring: string;
-}[] = [
-  {
-    tab: "relax",
-    label: "放松电台",
-    hint: "呼吸 · 声音",
-    icon: Leaf,
-    tile: "bg-emerald-100 text-emerald-800",
-    ring: "hover:border-emerald-200 hover:bg-emerald-50/80 active:bg-emerald-100/90",
-  },
-  {
-    tab: "release",
-    label: "情绪释放",
-    hint: "写下来再放下",
-    icon: HeartHandshake,
-    tile: "bg-violet-100 text-violet-800",
-    ring: "hover:border-violet-200 hover:bg-violet-50/80 active:bg-violet-100/90",
-  },
-  {
-    tab: "assess",
-    label: "自测与想法",
-    hint: "量表 · 日记 · 科普",
-    icon: ClipboardList,
-    tile: "bg-amber-100 text-amber-900",
-    ring: "hover:border-amber-200 hover:bg-amber-50/80 active:bg-amber-100/90",
-  },
-  {
-    tab: "help",
-    label: "帮助资源",
-    hint: "现实支持入口",
-    icon: ShieldCheck,
-    tile: "bg-sky-100 text-sky-800",
-    ring: "hover:border-sky-200 hover:bg-sky-50/80 active:bg-sky-100/90",
-  },
-];
-
 export function CampusSidebar({
   persona = "senior_sister",
   school,
   account,
   studentId,
-  onOpenTools,
 }: Props) {
   const [data, setData] = useState<CampusContext | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(true);
@@ -180,7 +122,7 @@ export function CampusSidebar({
             {initials(studentId || account || "同学")}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700/90">Campus today</p>
+            <p className="text-[11px] font-semibold tracking-[0.12em] text-violet-700/90">今日校园</p>
             <h2 className="mt-1 truncate text-lg font-bold leading-7 text-violet-950">
               {hello}，{maskedId}
             </h2>
@@ -279,38 +221,6 @@ export function CampusSidebar({
         )}
       </article>
 
-      {/* 快捷入口 */}
-      <section className="relative rounded-2xl border border-border/90 bg-white/95 p-4 shadow-[0_6px_20px_rgba(15,23,42,0.03)]">
-        <div className="mb-3 flex items-center gap-2">
-          <BookOpenCheck className="h-4 w-4 text-primary" aria-hidden="true" />
-          <h3 className="text-sm font-semibold">快捷入口</h3>
-        </div>
-        <div className="space-y-2">
-          {SHORTCUTS.map(({ tab, label, hint, icon: Icon, tile, ring }) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => onOpenTools?.(tab)}
-              className={`ark-interactive group flex min-h-[3.25rem] w-full items-center gap-3 rounded-xl border border-border/90 bg-white px-3 text-left transition-colors active:scale-[0.99] ${ring}`}
-            >
-              <span className={`grid h-10 w-10 place-items-center rounded-xl ${tile}`}>
-                <Icon className="h-5 w-5" aria-hidden="true" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-semibold text-foreground">{label}</span>
-                <span className="block text-xs text-muted-foreground">{hint}</span>
-              </span>
-              <ChevronRight
-                className="h-4 w-4 shrink-0 text-muted-foreground/70 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
-                aria-hidden="true"
-              />
-            </button>
-          ))}
-        </div>
-        <p className="mt-3 text-xs leading-5 text-muted-foreground">
-          求助电话与预约以「帮助」页配置为准，此处不展示号码。
-        </p>
-      </section>
     </div>
   );
 }

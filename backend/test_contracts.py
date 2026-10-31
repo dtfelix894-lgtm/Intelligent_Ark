@@ -1,11 +1,9 @@
-"""Regression contracts using isolated in-memory SQLite and real API handlers.
+"""Regression contracts against PostgreSQL and real API handlers.
 
 Run from backend: python -m unittest test_contracts
-No business database, external model call, or filesystem cleanup is involved.
+Requires TEST_DATABASE_URL or DATABASE_URL pointing at a reachable Postgres database.
 """
-import sqlite3
 import unittest
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -14,8 +12,10 @@ import httpx
 import database
 import main
 from auth import create_access_token
+from test_support import isolated_test_database, requires_postgres
 
 
+@requires_postgres
 class BackendContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_risk_language_alert_pipeline(self):
         from test_risk_language import CASES
@@ -44,27 +44,12 @@ class BackendContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.json()["total_users"], 1)
 
     def setUp(self):
-        self.connection = sqlite3.connect(":memory:", check_same_thread=False)
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA foreign_keys=ON")
-        self.addCleanup(self.connection.close)
-
-        @contextmanager
-        def memory_connection():
-            try:
-                yield self.connection
-                self.connection.commit()
-            except Exception:
-                self.connection.rollback()
-                raise
-
-        connections = patch.object(database, "get_conn", memory_connection)
-        connections.start()
-        self.addCleanup(connections.stop)
+        self._db = isolated_test_database()
+        self._db.__enter__()
+        self.addCleanup(lambda: self._db.__exit__(None, None, None))
         invitation = patch.object(main, "ADMIN_INVITE_CODE", "contract-invite")
         invitation.start()
         self.addCleanup(invitation.stop)
-        database.init_db()
 
     async def asyncSetUp(self):
         self.client = httpx.AsyncClient(

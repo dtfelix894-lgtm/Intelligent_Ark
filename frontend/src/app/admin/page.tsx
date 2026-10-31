@@ -178,7 +178,7 @@ export default function AdminPage() {
       });
       setAuditItems(data.items || []);
     } catch (reason) {
-      setAuditError(reason instanceof Error ? reason.message : "审计日志加载失败");
+      setAuditError(reason instanceof Error ? reason.message : "操作记录加载失败");
     } finally {
       setAuditLoading(false);
     }
@@ -284,7 +284,7 @@ export default function AdminPage() {
           // 静默轮询：成功则清错误；失败不打断已有列表
           if (failures.length === 0) setError("");
         } else {
-          setError(failures.length ? `${failures.join("；")}。请确认后端服务已启动后重试。` : "");
+          setError(failures.length ? `${failures.join("；")}。请检查网络连接后重试。` : "");
         }
       } finally {
         window.clearTimeout(timeout);
@@ -509,7 +509,7 @@ export default function AdminPage() {
             [
               ["workbench", "工作台"],
               ["metrics", "数据看板"],
-              ["audit", "审计日志"],
+              ["audit", "操作记录"],
             ] as const
           ).map(([id, label]) => (
             <button

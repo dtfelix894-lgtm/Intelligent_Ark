@@ -6,6 +6,7 @@ import {
   CloudRain,
   Headphones,
   Moon,
+  Music,
   Pause,
   Piano,
   Play,
@@ -45,8 +46,17 @@ const MOODS: { id: Mood; label: string; icon: typeof Zap }[] = [
   { id: "sleep", label: "入睡", icon: Moon },
 ];
 
-/** 曲库：已移除商业流行曲；京剧/评书/来源不明短句不纳入。 */
 const RADIO_TRACKS: Track[] = [
+  {
+    id: "medal-focus",
+    title: "勋章",
+    subtitle: "轻激励 · 提神",
+    src: "/sounds/medal.mp3",
+    mood: "focus",
+    icon: Music,
+    loop: false,
+    sourceNote: "勋章",
+  },
   {
     id: "forest-focus",
     title: "林间晨声",
@@ -55,7 +65,17 @@ const RADIO_TRACKS: Track[] = [
     mood: "focus",
     icon: Trees,
     loop: true,
-    sourceNote: "项目 public/sounds/forest.mp3 自有环境音",
+    sourceNote: "自然环境音",
+  },
+  {
+    id: "lemon-tree-relax",
+    title: "Lemon Tree",
+    subtitle: "轻快节奏 · 放松",
+    src: "/sounds/lemon-tree.mp3",
+    mood: "relax",
+    icon: Music,
+    loop: false,
+    sourceNote: "Lemon Tree",
   },
   {
     id: "piano-relax",
@@ -65,7 +85,7 @@ const RADIO_TRACKS: Track[] = [
     mood: "relax",
     icon: Piano,
     loop: true,
-    sourceNote: "项目 public/sounds/piano.mp3 自有钢琴纯音（非流行曲）",
+    sourceNote: "钢琴纯音（无歌词）",
   },
   {
     id: "piano-sleep",
@@ -75,7 +95,7 @@ const RADIO_TRACKS: Track[] = [
     mood: "sleep",
     icon: Moon,
     loop: true,
-    sourceNote: "同上钢琴纯音，用于入睡分组",
+    sourceNote: "钢琴纯音（无歌词）",
   },
   {
     id: "meditation-sleep",
@@ -85,7 +105,7 @@ const RADIO_TRACKS: Track[] = [
     mood: "sleep",
     icon: Brain,
     loop: true,
-    sourceNote: "项目 public/sounds/meditation.mp3 自有垫底素材",
+    sourceNote: "柔和冥想音色",
   },
 ];
 
@@ -96,7 +116,7 @@ const AMBIENCE: Ambience[] = [
     src: "/sounds/rain-loop.wav",
     icon: CloudRain,
     loop: true,
-    sourceNote: "本批程序化短循环 rain-loop.wav（替换原 17MB rain.mp3）",
+    sourceNote: "循环雨声",
   },
   {
     id: "wave",
@@ -104,7 +124,7 @@ const AMBIENCE: Ambience[] = [
     src: "/sounds/wave.mp3",
     icon: Waves,
     loop: true,
-    sourceNote: "项目 public/sounds/wave.mp3 自有环境音",
+    sourceNote: "海浪环境音",
   },
   {
     id: "forest",
@@ -112,7 +132,7 @@ const AMBIENCE: Ambience[] = [
     src: "/sounds/forest.mp3",
     icon: Trees,
     loop: true,
-    sourceNote: "项目 public/sounds/forest.mp3 自有环境音",
+    sourceNote: "自然环境音",
   },
 ];
 
@@ -222,7 +242,8 @@ export function AudioWellness({
       const node = radioRef.current;
       if (!node) return;
       try {
-        node.loop = true;
+        const track = RADIO_TRACKS.find((t) => t.id === id);
+        node.loop = track?.loop ?? true;
         await node.play();
         setRadioPlaying(true);
       } catch {
@@ -282,7 +303,7 @@ export function AudioWellness({
           </h3>
         </div>
         <p className="mb-3 text-xs leading-5 text-muted-foreground">
-          已移除商业流行曲。当前曲库为项目自有钢琴纯音与自然环境音，详见曲目来源标注。
+          按心情选曲，点击即可播放；完整歌曲播完会停止，环境音与纯音可循环。
         </p>
 
         <div className="mb-3 grid grid-cols-3 gap-2">
@@ -416,7 +437,7 @@ export function AudioWellness({
           ref={radioRef}
           src={activeTrack.src}
           preload="metadata"
-          loop
+          loop={activeTrack.loop ?? true}
           onTimeUpdate={(e) => setProgress(e.currentTarget.currentTime)}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
           onPlay={() => setRadioPlaying(true)}

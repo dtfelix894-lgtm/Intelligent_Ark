@@ -14,13 +14,13 @@
 
 ## 技术栈
 
-- 后端：Python 3.12、FastAPI、SQLite WAL、JWT HS256、bcrypt。
+- 后端：Python 3.12、FastAPI、PostgreSQL（`DATABASE_URL`）、JWT HS256、bcrypt。
 - 前端：Next.js 15、React 18、TypeScript、Tailwind、Shadcn UI。
 - AI：对话走 OpenAI 兼容的 `LLM_*`；未配置密钥时使用高校心理关键词兜底。ASR 走智谱 `ZHIPU_*`，TTS 走小米 MiMo `MIMO_*`（未配置时返回 502）。
 
 ## 目录结构
 
-`backend/main.py` 为 API 入口；`auth.py` 负责鉴权，`database.py` 负责 SQLite CRUD，`llm_service.py` 负责模型调用、关键词风险判定和兜底，`schemas.py` 负责对话与风险模型（`ChatRequest` / `RiskAssessment` / `ChatResponse`），登录注册的请求模型直接定义在 `main.py`。前端页面位于 `frontend/src/app`，统一请求封装位于 `frontend/src/lib/api.ts`。
+`backend/main.py` 为 API 入口；`auth.py` 负责鉴权，`database.py` 负责 PostgreSQL CRUD（经 `db.py` 连接池），`llm_service.py` 负责模型调用、关键词风险判定和兜底，`schemas.py` 负责对话与风险模型（`ChatRequest` / `RiskAssessment` / `ChatResponse`），登录注册的请求模型直接定义在 `main.py`。前端页面位于 `frontend/src/app`，统一请求封装位于 `frontend/src/lib/api.ts`。
 
 学生端主要组件在 `frontend/src/app/chat/_components/`。其中 `ReleaseTools.tsx` 仍引用 `chat/components/EmotionShredder.tsx`；不能将整个 `chat/components/` 判定为无引用。`test-login/` 为历史页面，兼容代码只提不删。
 

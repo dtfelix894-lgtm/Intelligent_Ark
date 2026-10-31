@@ -1,32 +1,33 @@
 """
-Dialect-aware DB access layer.
+PostgreSQL access layer (psycopg v3 + connection pool).
 
-- If DATABASE_URL is postgresql:// or postgres:// → psycopg v3 pool (UTC timestamptz).
-- Otherwise → existing SQLite via DB_PATH (dev / transition fallback).
-
-Call sites keep using "?" placeholders; PG path rewrites them to "%s".
-Do not invent passwords; missing/invalid URL must not break SQLite startup.
+Call sites keep using "?" placeholders; they are rewritten to "%s" for psycopg.
+Requires DATABASE_URL (or Vercel POSTGRES_URL). SQLite is not supported.
 """
 from __future__ import annotations
 
 import os
 import re
-import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Optional, Union
+from typing import Any, Iterator, Optional
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from zoneinfo import ZoneInfo
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 BASE_DIR = Path(__file__).parent
-DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "intelligent_ark.db")))
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 PG_SCHEMA_PATH = BASE_DIR / "sql" / "pg_schema_v1.sql"
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 UTC = ZoneInfo("UTC")
 
-# Tables with IDENTITY / lastrowid consumers
 _IDENTITY_TABLES = {
     "users",
     "chat_messages",
@@ -42,10 +43,57 @@ _psycopg = None
 _PgIntegrityError = ()
 _dict_row = None
 
+_ENV_URL_KEYS = (
+    "DATABASE_URL",
+    "POSTGRES_URL",
+    "POSTGRES_PRISMA_URL",
+    "POSTGRES_URL_NON_POOLING",
+)
 
-def using_postgres() -> bool:
-    u = _resolve_database_url().lower()
-    return u.startswith("postgresql://") or u.startswith("postgres://")
+
+class IntegrityError(Exception):
+    """Raised for unique/constraint conflicts."""
+
+
+def resolve_database_url() -> str:
+    """Resolve PostgreSQL URL from environment (Vercel-compatible fallbacks)."""
+    for key in _ENV_URL_KEYS:
+        raw = (os.getenv(key) or "").strip()
+        if not raw:
+            continue
+        return _normalize_database_url(raw)
+    raise RuntimeError(
+        "DATABASE_URL is required (PostgreSQL). "
+        "Example: postgresql://user:pass@127.0.0.1:5432/intelligent_ark. "
+        "On Vercel, attach Postgres or set POSTGRES_URL from the integration."
+    )
+
+
+def _normalize_database_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    if not url.lower().startswith("postgresql://"):
+        raise RuntimeError(
+            f"DATABASE_URL must use postgresql:// or postgres:// (got prefix {url[:12]!r}…)"
+        )
+    if "REPLACE_WITH" in url or "YOUR_PASSWORD" in url:
+        raise RuntimeError(
+            "DATABASE_URL still contains a placeholder password. Set a real credential."
+        )
+    return _ensure_sslmode(url)
+
+
+def _ensure_sslmode(url: str) -> str:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "::1") or host.endswith(".local"):
+        return url
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    if "sslmode" not in qs and "ssl" not in qs:
+        qs["sslmode"] = ["require"]
+        flat = [(k, v[0] if v else "") for k, v in qs.items()]
+        return urlunparse(parsed._replace(query=urlencode(flat)))
+    return url
 
 
 def _load_psycopg():
@@ -58,8 +106,7 @@ def _load_psycopg():
         from psycopg.rows import dict_row
     except ImportError as e:
         raise RuntimeError(
-            "DATABASE_URL points to PostgreSQL but psycopg is not installed. "
-            "Install with: pip install \"psycopg[binary,pool]>=3.1\""
+            'psycopg is required. Install with: pip install "psycopg[binary,pool]>=3.1"'
         ) from e
     _psycopg = psycopg
     _PgIntegrityError = (pg_errors.IntegrityConstraintViolation, pg_errors.UniqueViolation)
@@ -67,99 +114,51 @@ def _load_psycopg():
     return _psycopg
 
 
-# Unified IntegrityError for callers (sqlite + optional psycopg).
-class IntegrityError(Exception):
-    """Raised for unique/constraint conflicts (both dialects)."""
-
-
-
-def integrity_errors() -> tuple:
-    """Tuple usable in `except integrity_errors():` covering both dialects."""
-    errs = [sqlite3.IntegrityError]
-    if using_postgres():
-        try:
-            _load_psycopg()
-            errs.extend(_PgIntegrityError)
-        except Exception:
-            pass
-    return tuple(errs)
-
-
 def sql_now() -> str:
-    """SQL expression for \"now\" instant."""
-    if using_postgres():
-        return "now()"
-    # SQLite transition: keep Asia/Taipei wall TEXT compatible with existing rows
-    return "datetime('now','+8 hours')"
+    return "now()"
 
 
 def sql_today() -> str:
-    if using_postgres():
-        return "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')::date"
-    return "date(datetime('now','+8 hours'))"
+    return "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')::date"
 
 
 def sql_now_plus_minutes(param_is_int: bool = True) -> str:
-    """One placeholder: integer minutes (PG) or SQLite modifier string '+N minutes'."""
-    if using_postgres():
-        # placeholder bound as int minutes
-        return "(now() + make_interval(mins => ?))"
-    return "datetime('now','+8 hours', ?)"
+    return "(now() + make_interval(mins => ?))"
 
 
 def sql_now_minus_days() -> str:
-    """One placeholder: integer days (PG) or SQLite modifier '-N days'."""
-    if using_postgres():
-        return "(now() - make_interval(days => ?))"
-    return "datetime('now','+8 hours', ?)"
+    return "(now() - make_interval(days => ?))"
 
 
 def sql_today_plus_days() -> str:
-    """One placeholder: integer days (PG) or SQLite modifier '+N days'."""
-    if using_postgres():
-        return "((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')::date + ?::int)"
-    return "date(datetime('now','+8 hours'), ?)"
+    return "((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')::date + ?::int)"
 
 
 def minutes_param(minutes: int) -> Any:
-    if using_postgres():
-        return int(minutes)
-    return f"+{int(minutes)} minutes"
+    return int(minutes)
 
 
 def days_ago_param(days: int) -> Any:
-    if using_postgres():
-        return int(days)
-    return f"-{int(days)} days"
+    return int(days)
 
 
 def days_ahead_param(days: int) -> Any:
-    if using_postgres():
-        return int(days)
-    return f"+{int(days)} days"
+    return int(days)
 
 
 def json_param(value: Any) -> Any:
-    """Bind JSON/JSONB parameter (list/dict)."""
-    if using_postgres():
-        from psycopg.types.json import Jsonb
-        return Jsonb(value)
-    import json
-    return json.dumps(value, ensure_ascii=False)
+    from psycopg.types.json import Jsonb
+
+    return Jsonb(value)
 
 
 def format_ts_for_api(value: Any) -> Any:
-    """Normalize DB timestamps to Asia/Taipei wall 'YYYY-MM-DD HH:MM:SS' strings for API."""
     if value is None:
         return None
     if isinstance(value, datetime):
         dt = value
         if dt.tzinfo is None:
-            # treat naive as UTC if on PG path historically; for SQLite wall keep as-is
-            if using_postgres():
-                dt = dt.replace(tzinfo=UTC)
-            else:
-                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            dt = dt.replace(tzinfo=UTC)
         return dt.astimezone(TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(value, date) and not isinstance(value, datetime):
         return value.isoformat()
@@ -167,7 +166,6 @@ def format_ts_for_api(value: Any) -> Any:
 
 
 def _qmark_to_pyformat(sql: str) -> str:
-    """Replace ? placeholders with %s (no literal ? expected in this codebase)."""
     return sql.replace("?", "%s")
 
 
@@ -187,25 +185,18 @@ class _PgCursorProxy:
 
 
 class _PgConnProxy:
-    """sqlite3-like façade over a psycopg connection."""
-
     def __init__(self, conn):
         self._conn = conn
         self.lastrowid: Optional[int] = None
         self.rowcount: int = -1
 
     def execute(self, sql: str, params: Any = None):
-        sql_work = sql
-        # Translate legacy SQLite INSERT OR IGNORE if any remain
         sql_work = re.sub(
             r"INSERT\s+OR\s+IGNORE\s+INTO\s+user_profiles",
             "INSERT INTO user_profiles",
-            sql_work,
+            sql,
             flags=re.IGNORECASE,
         )
-        if re.search(r"INSERT\s+INTO\s+user_profiles", sql_work, re.I) and "ON CONFLICT" not in sql_work.upper():
-            # Only when it was OR IGNORE path — callers should use ON CONFLICT; leave as-is otherwise
-            pass
 
         upper = sql_work.lstrip().upper()
         returning = False
@@ -228,14 +219,12 @@ class _PgConnProxy:
             if row is not None:
                 self.lastrowid = row["id"] if isinstance(row, dict) else row[0]
         proxy = _PgCursorProxy(cur)
-        # Call sites use cur.lastrowid (sqlite3 style); expose it on the cursor proxy too.
         proxy.lastrowid = self.lastrowid
         proxy.rowcount = self.rowcount
         return proxy
 
     def executescript(self, script: str):
-        # Split on semicolons carefully enough for our DDL file
-        self._conn.execute(script)  # psycopg allows multiple statements in one execute for simple DDL
+        self._conn.execute(script)
         return self
 
     def commit(self):
@@ -245,13 +234,10 @@ class _PgConnProxy:
         self._conn.rollback()
 
     def close(self):
-        # Pool returns connection on context exit; do not close underlying
         pass
 
 
 class _RowDict(dict):
-    """dict with .keys() that also supports sqlite3.Row-like membership."""
-
     def keys(self):
         return dict.keys(self)
 
@@ -272,107 +258,68 @@ def _normalize_row(row: Any) -> Any:
     return row
 
 
+def _pool_settings() -> dict[str, Any]:
+    on_vercel = os.getenv("VERCEL", "").strip() == "1"
+    return {
+        "min_size": int(os.getenv("PG_POOL_MIN", "0" if on_vercel else "1")),
+        "max_size": int(os.getenv("PG_POOL_MAX", "2" if on_vercel else "10")),
+        "timeout": float(os.getenv("PG_POOL_TIMEOUT", "30")),
+        "max_idle": float(os.getenv("PG_POOL_MAX_IDLE", "60" if on_vercel else "300")),
+        "max_lifetime": float(os.getenv("PG_POOL_MAX_LIFETIME", "600" if on_vercel else "3600")),
+    }
+
+
 def _ensure_pool():
     global _pool
     if _pool is not None:
         return _pool
-    url = _resolve_database_url()
-    if "REPLACE_WITH" in url or "YOUR_PASSWORD" in url:
-        raise RuntimeError(
-            "DATABASE_URL still contains a placeholder password. "
-            "Unset DATABASE_URL to use SQLite, or set a real password."
-        )
+    conninfo = resolve_database_url()
     _load_psycopg()
     try:
         from psycopg_pool import ConnectionPool
     except ImportError as e:
         raise RuntimeError(
-            "psycopg_pool missing. Install with: pip install \"psycopg[binary,pool]>=3.1\""
+            'psycopg_pool missing. Install with: pip install "psycopg[binary,pool]>=3.1"'
         ) from e
 
-    def _configure(conn):
-        conn.row_factory = _dict_row
-
+    settings = _pool_settings()
     _pool = ConnectionPool(
-        conninfo=_resolve_database_url(),
-        min_size=1,
-        max_size=int(os.getenv("PG_POOL_MAX", "10")),
+        conninfo=conninfo,
         kwargs={"row_factory": _dict_row},
         open=True,
+        **settings,
     )
     return _pool
 
 
-def _resolve_database_url() -> str:
-    import sys
-    app_db = sys.modules.get("database")
-    if app_db is not None and hasattr(app_db, "DATABASE_URL"):
-        return (getattr(app_db, "DATABASE_URL") or "").strip()
-    return (os.getenv("DATABASE_URL") or DATABASE_URL or "").strip()
-
-
-def _resolve_sqlite_path() -> Path:
-    """Prefer database.DB_PATH when present so unittest patches keep working."""
-    import sys
-    app_db = sys.modules.get("database")
-    if app_db is not None and getattr(app_db, "DB_PATH", None) is not None:
-        return Path(app_db.DB_PATH)
-    return Path(DB_PATH)
-
-
 @contextmanager
 def get_conn() -> Iterator[Any]:
-    if using_postgres():
-        pool = _ensure_pool()
-        with pool.connection() as conn:
-            proxy = _PgConnProxy(conn)
-            try:
-                yield proxy
-                conn.commit()
-            except Exception as e:
-                conn.rollback()
-                _load_psycopg()
-                if _PgIntegrityError and isinstance(e, _PgIntegrityError):
-                    raise IntegrityError(str(e)) from e
-                raise
-        return
-
-    # SQLite fallback (default when DATABASE_URL unset)
-    sqlite_path = _resolve_sqlite_path()
-    sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(sqlite_path, check_same_thread=False, timeout=10.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    try:
-        yield conn
-        conn.commit()
-    except sqlite3.IntegrityError as e:
-        conn.rollback()
-        raise IntegrityError(str(e)) from e
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    pool = _ensure_pool()
+    with pool.connection() as conn:
+        proxy = _PgConnProxy(conn)
+        try:
+            yield proxy
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            _load_psycopg()
+            if _PgIntegrityError and isinstance(e, _PgIntegrityError):
+                raise IntegrityError(str(e)) from e
+            raise
 
 
 def init_postgres_schema(conn_proxy: Optional[Any] = None) -> None:
-    """Apply backend/sql/pg_schema_v1.sql (IF NOT EXISTS)."""
     if not PG_SCHEMA_PATH.is_file():
         raise FileNotFoundError(f"PG schema not found: {PG_SCHEMA_PATH}")
     ddl = PG_SCHEMA_PATH.read_text(encoding="utf-8")
     if conn_proxy is not None:
-        # run statements one-by-one for clearer errors
         _run_pg_ddl(conn_proxy._conn, ddl)
         return
     with get_conn() as conn:
-        _run_pg_ddl(conn._conn if isinstance(conn, _PgConnProxy) else conn, ddl)
+        _run_pg_ddl(conn._conn, ddl)
 
 
 def _run_pg_ddl(raw_conn, ddl: str) -> None:
-    # Strip line comments carefully; execute whole script (psycopg supports multi-statement)
     raw_conn.execute(ddl)
 
 
@@ -383,5 +330,7 @@ def close_pool() -> None:
         _pool = None
 
 
-def backend_label() -> str:
-    return "postgresql" if using_postgres() else "sqlite"
+def check_connection() -> None:
+    """Ping database; raises on failure (health checks / startup diagnostics)."""
+    with get_conn() as conn:
+        conn.execute("SELECT 1")

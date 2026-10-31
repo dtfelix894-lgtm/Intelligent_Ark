@@ -220,7 +220,7 @@ export function AlertPool({
             <RefreshCw className="h-7 w-7" aria-hidden="true" />
           </span>
           <h3 className="mt-5 text-lg font-semibold">预警数据暂不可用</h3>
-          <p className="mt-2 text-sm text-muted-foreground">请确认后端服务已启动，然后点击重试。</p>
+          <p className="mt-2 text-sm text-muted-foreground">暂时无法加载预警列表，请检查网络后点击重试。</p>
         </div>
       ) : alerts.length === 0 ? (
         <div className="ark-soft-card py-14 text-center">

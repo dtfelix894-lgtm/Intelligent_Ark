@@ -42,8 +42,7 @@ export function SelfHelpPanel({
   return (
     <div>
       <div className="mb-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Self care</p>
-        <h2 className="mt-1 text-lg font-bold">自助工具</h2>
+        <h2 className="text-lg font-bold">自助工具</h2>
         <p className="mt-1 text-sm text-muted-foreground">先照顾此刻的自己。</p>
       </div>
 

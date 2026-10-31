@@ -9,19 +9,17 @@ import sys
 def serve() -> None:
     if os.environ.get("ARK_ACCEPTANCE") != "1":
         raise SystemExit("Use scripts/verify_project.py to start the isolated fixture.")
-    artifacts = Path(os.environ["ARK_ARTIFACT_DIR"]).resolve()
-    database_path = Path(os.environ["DB_PATH"]).resolve()
-    if database_path.parent != artifacts or database_path.name != "acceptance.db":
-        raise SystemExit("Refusing a database outside the acceptance artifact directory.")
+    db_url = (os.environ.get("DATABASE_URL") or "").strip()
+    if not db_url.lower().startswith(("postgresql://", "postgres://")):
+        raise SystemExit("Acceptance fixture requires DATABASE_URL (PostgreSQL).")
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
     import database
     import llm_service
     import asr_service
     import main
     import uvicorn
+    from test_support import wipe_all_tables
 
-    # The actual API, auth and persistence are unchanged. Only remote providers
-    # are replaced; no billing keys or production data are needed by this suite.
     llm_service.API_KEY = ""
 
     async def quote():
@@ -34,7 +32,7 @@ def serve() -> None:
 
     main._get_daily_quote = quote
     asr_service.transcribe_audio = transcribe
-    database.init_db()
+    wipe_all_tables()
     database.get_or_create_user(
         "G900", "ArkTest123!", "admin",
         {"admin_type": "G", "school_name": "验收测试大学"},

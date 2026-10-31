@@ -165,6 +165,28 @@ async function withDeadline<T>(options: ApiFetchOptions, run: (scoped: ApiFetchO
   }
 }
 
+/** 将接口错误转成用户可读文案，避免暴露状态码、英文参数名或内部术语。 */
+function userFacingApiError(status: number, raw: string): string {
+  const text = raw.trim();
+  const looksInternal =
+    !text ||
+    /dev_override|assignee|due_date|still_risk|improved|view_alert|localhost|\.env|HTTPException|Traceback|Error:/i.test(
+      text,
+    ) ||
+    /^\(\d{3}\)$/.test(text) ||
+    text.startsWith("请求失败 (");
+  if (looksInternal) {
+    if (status === 401) return "登录已失效，请重新登录";
+    if (status === 403) return "暂无权限执行此操作";
+    if (status === 404) return "未找到相关内容，请刷新后重试";
+    if (status === 409) return text.includes("认领") || text.includes("注册") ? text : "操作冲突，请刷新后重试";
+    if (status === 422) return text.includes("工号") || text.includes("日期") || text.includes("风险") ? text : "提交的信息不完整或格式不正确";
+    if (status === 502 || status === 503) return "服务暂时不可用，请稍后重试";
+    return "操作未成功，请稍后重试";
+  }
+  return text;
+}
+
 /** 原始响应在收到响应头时完成；JSON 使用下方覆盖正文读取的时限。 */
 export function apiFetch(path: string, options: ApiFetchOptions = {}): Promise<Response> {
   return withDeadline(options, (scoped) => request(path, scoped));
@@ -185,13 +207,13 @@ export async function apiJson<T = unknown>(
     // 非 JSON 响应
   }
   if (!res.ok) {
-    const msg =
+    const raw =
       (data && (typeof data.detail === "string"
         ? data.detail
         : Array.isArray(data.detail)
           ? data.detail.map((e: { msg: string }) => e.msg).join("；")
-          : data.message)) || `请求失败 (${res.status})`;
-    throw new Error(msg);
+          : data.message)) || "";
+    throw new Error(userFacingApiError(res.status, String(raw || "")));
   }
   return data as T;
   });

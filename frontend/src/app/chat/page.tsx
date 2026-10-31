@@ -82,9 +82,9 @@ export default function ChatPage() {
     const localOk = saveCompanionPersona(next, profile?.account);
     const remoteOk = await saveCompanionPersonaRemote(next);
     if (!remoteOk && !localOk) {
-      setError("人设已在当前页面生效，但未能保存到服务器或本机。请检查网络并允许浏览器存储后重新选择。");
+      setError("人设已在当前页面生效，但未能保存。请检查网络并允许浏览器存储后重新选择。");
     } else if (!remoteOk) {
-      setError("人设已保存在本机，但未能同步到服务器。联网后可再选一次以完成同步。");
+      setError("人设暂未同步到账号，请联网后重试。");
     } else {
       setError("");
     }
@@ -147,7 +147,6 @@ export default function ChatPage() {
             school={profile?.school}
             account={profile?.account}
             studentId={profile?.student_id}
-            onOpenTools={openTools}
           />
         </aside>
         <section aria-label={persona === "senior_brother" ? "知心学长对话" : "知心学姐对话"} className="flex min-h-0 min-w-0 flex-col bg-gradient-to-b from-violet-50/20 via-background/60 to-background/80">
@@ -167,7 +166,7 @@ export default function ChatPage() {
         >
           <SheetHeader className="shrink-0 border-b border-violet-100/70 bg-white/80 px-5 pb-4 pt-5 pr-12 text-left backdrop-blur-sm">
             <SheetTitle>校园状态</SheetTitle>
-            <SheetDescription>问候、今日摘要、治愈语句与自助快捷入口。</SheetDescription>
+            <SheetDescription>问候、今日摘要与每日治愈。</SheetDescription>
           </SheetHeader>
           <div className="flex-1 px-4 py-4 sm:px-5 sm:py-5">
             <CampusSidebar
@@ -175,10 +174,6 @@ export default function ChatPage() {
               school={profile?.school}
               account={profile?.account}
               studentId={profile?.student_id}
-              onOpenTools={(tab) => {
-                setCampusOpen(false);
-                openTools(tab);
-              }}
             />
           </div>
         </SheetContent>
